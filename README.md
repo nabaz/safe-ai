@@ -59,6 +59,10 @@ pnpm --filter @kidai/db db:migrate
 
 (First time: type a migration name like `init` when prompted.)
 
+> **Note:** The migrate script automatically runs `prisma generate` after migrating to keep
+> the Prisma client in sync. If you ever see `Cannot read properties of undefined` errors
+> on a Prisma model, run `pnpm --filter @kidai/db db:generate` manually.
+
 ### 6. Start the dev server
 
 ```bash
