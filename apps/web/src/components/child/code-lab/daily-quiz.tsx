@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { cn } from '@/lib/cn'
 import { CheckCircle, XCircle, ChevronRight, Trophy, ArrowLeft, Loader2 } from 'lucide-react'
 import type { LessonTier } from './curriculum'
+import type { LevelInfo } from '@/lib/points'
 
 interface QuizQuestion {
   question: string
@@ -16,7 +17,7 @@ interface Props {
   tier: LessonTier
   alreadyCompleted: boolean
   savedScore: number | null
-  onComplete: (score: number) => void
+  onComplete: (score: number, awards?: Array<{ points: number; reason: string }>, levelInfo?: LevelInfo, totalXp?: number) => void
   onBack: () => void
 }
 
@@ -61,17 +62,17 @@ export function DailyQuiz({ tier, alreadyCompleted, savedScore, onComplete, onBa
 
   const handleNext = async () => {
     if (current + 1 >= questions!.length) {
-      const finalS = score + (selected === questions![current]!.correct ? 0 : 0) // already counted
       const total = score
       setFinalScore(total)
       setDone(true)
-      // Submit score
-      await fetch('/api/code-lab/quiz', {
+      // Submit score and get XP awards back
+      const res = await fetch('/api/code-lab/quiz', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score: total }),
+        body: JSON.stringify({ score: total, totalQuestions: questions!.length }),
       })
-      onComplete(total)
+      const data = await res.json()
+      onComplete(total, data.awards, data.levelInfo, data.totalXp)
     } else {
       setCurrent(c => c + 1)
       setSelected(null)

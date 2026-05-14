@@ -63,6 +63,7 @@ model ChildProfile {
   alerts              Alert[]
   codeLessonProgress  CodeLessonProgress[]
   dailyCodeSessions   DailyCodeSession[]
+  pointsLedger        PointsLedger[]
 
   @@map("child_profiles")
 }
@@ -128,6 +129,33 @@ model DailyCodeSession {
 
   @@unique([childId, date])
   @@map("daily_code_sessions")
+}
+
+// ─── Points & XP ─────────────────────────────────────────────────────────────
+
+model PointsLedger {
+  id          String        @id @default(cuid())
+  childId     String
+  child       ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  points      Int
+  reason      PointsReason
+  description String
+  metadata    Json?         // e.g. { lessonId, quizScore, streakDay }
+
+  createdAt   DateTime      @default(now())
+
+  @@map("points_ledger")
+}
+
+enum PointsReason {
+  LESSON_COMPLETE
+  LESSON_REVIEW
+  DAILY_BONUS
+  QUIZ_CORRECT
+  QUIZ_PERFECT
+  WELCOME_BONUS
+  CHALLENGE_COMPLETE
 }
 
 // ─── Conversations ─────────────────────────────────────────────────────────────

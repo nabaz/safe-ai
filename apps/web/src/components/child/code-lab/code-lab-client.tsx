@@ -8,10 +8,12 @@ import type { Lesson, LessonTier } from './curriculum'
 import { DAILY_LESSON_COUNT } from './daily-engine'
 import { LessonView } from './lesson-view'
 import { DailyQuiz } from './daily-quiz'
+import { XpBar } from './xp-bar'
 import { MessageSquare, Menu, X, CheckCircle, Lock, Star, Trophy, Zap } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/cn'
-import { useRouter } from 'next/navigation'
+import toast from 'react-hot-toast'
+import type { LevelInfo } from '@/lib/points'
 
 interface Props {
   session: ChildSessionPayload
@@ -21,6 +23,8 @@ interface Props {
   dailyComplete: boolean
   quizCompleted: boolean
   quizScore: number | null
+  totalXp: number
+  levelInfo: LevelInfo
 }
 
 const TIER_THEME = {
@@ -37,8 +41,9 @@ export function CodeLabClient({
   dailyComplete: initialDailyComplete,
   quizCompleted: initialQuizCompleted,
   quizScore: initialQuizScore,
+  totalXp: initialTotalXp,
+  levelInfo: initialLevelInfo,
 }: Props) {
-  const router = useRouter()
   const tier = session.tier as LessonTier
   const theme = TIER_THEME[tier] ?? TIER_THEME.BUILDER
   const allLessons = getLessonsForTier(tier)
@@ -48,6 +53,8 @@ export function CodeLabClient({
   const [dailyComplete, setDailyComplete] = useState(initialDailyComplete)
   const [quizCompleted, setQuizCompleted] = useState(initialQuizCompleted)
   const [quizScore, setQuizScore] = useState<number | null>(initialQuizScore)
+  const [totalXp, setTotalXp] = useState(initialTotalXp)
+  const [levelInfo, setLevelInfo] = useState(initialLevelInfo)
 
   // Today's lessons in order, with the full Lesson objects
   const todayLessons = todayLessonIds
@@ -64,15 +71,16 @@ export function CodeLabClient({
   const todayDoneCount = todayCompleted.length
   const totalDone = completedIds.length
 
-  // Mark a lesson complete — calls API and updates local state
+  // Mark a lesson complete — calls API, awards XP, shows toast
   const handleLessonComplete = useCallback(async (lessonId: string) => {
     if (completedIds.includes(lessonId)) return
 
-    await fetch('/api/code-lab', {
+    const res = await fetch('/api/code-lab', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lessonId }),
     })
+    const data = await res.json()
 
     const newCompleted = [...completedIds, lessonId]
     const newTodayCompleted = [...todayCompleted, ...(todayLessonIds.includes(lessonId) ? [lessonId] : [])]
@@ -81,7 +89,28 @@ export function CodeLabClient({
 
     const allTodayDone = todayLessonIds.every(id => newCompleted.includes(id))
     if (allTodayDone) setDailyComplete(true)
-  }, [completedIds, todayCompleted, todayLessonIds])
+
+    // Update XP display
+    if (data.totalXp !== undefined) {
+      const prevLevel = levelInfo.level
+      setTotalXp(data.totalXp)
+      setLevelInfo(data.levelInfo)
+
+      // Show XP toasts
+      if (data.awards?.length) {
+        data.awards.forEach((a: { points: number; reason: string }) => {
+          toast.success(`+${a.points} XP — ${a.reason}`, { icon: '⚡', duration: 3000 })
+        })
+      }
+      // Level up celebration
+      if (data.levelInfo?.level > prevLevel) {
+        toast.success(
+          `${data.levelInfo.emoji} Level up! You're now Level ${data.levelInfo.level} — ${data.levelInfo.title}!`,
+          { duration: 5000, icon: '🎉' }
+        )
+      }
+    }
+  }, [completedIds, todayCompleted, todayLessonIds, levelInfo])
 
   // Move to next lesson in today's list
   const handleNext = useCallback(async () => {
@@ -95,10 +124,28 @@ export function CodeLabClient({
     }
   }, [currentLesson, todayLessons, completedIds, handleLessonComplete, dailyComplete, todayLessonIds])
 
-  const handleQuizComplete = (score: number) => {
+  const handleQuizComplete = (score: number, awards?: Array<{ points: number; reason: string }>, newLevelInfo?: LevelInfo, newTotalXp?: number) => {
     setQuizCompleted(true)
     setQuizScore(score)
     setView('today')
+
+    if (newTotalXp !== undefined) {
+      const prevLevel = levelInfo.level
+      setTotalXp(newTotalXp)
+      if (newLevelInfo) setLevelInfo(newLevelInfo)
+
+      if (awards?.length) {
+        awards.forEach(a => {
+          toast.success(`+${a.points} XP — ${a.reason}`, { icon: '⭐', duration: 3000 })
+        })
+      }
+      if (newLevelInfo && newLevelInfo.level > prevLevel) {
+        toast.success(
+          `${newLevelInfo.emoji} Level up! Level ${newLevelInfo.level} — ${newLevelInfo.title}!`,
+          { duration: 5000, icon: '🎉' }
+        )
+      }
+    }
   }
 
   // Determine if a lesson is accessible:
@@ -136,12 +183,18 @@ export function CodeLabClient({
 
         <div className="flex items-center gap-2">
           {/* Daily progress pills */}
-          <div className="hidden sm:flex items-center gap-1">
-            {todayLessons.map((l, i) => (
+          {/* XP bar — compact */}
+          <div className="hidden sm:block">
+            <XpBar levelInfo={levelInfo} totalXp={totalXp} theme={theme} compact />
+          </div>
+
+          {/* Daily dots */}
+          <div className="flex items-center gap-1">
+            {todayLessons.map((l) => (
               <div
                 key={l.id}
                 className={cn(
-                  'w-2.5 h-2.5 rounded-full transition-all',
+                  'w-2 h-2 rounded-full transition-all',
                   todayCompleted.includes(l.id) ? theme.bg : 'bg-gray-200'
                 )}
                 title={l.title}
@@ -194,6 +247,11 @@ export function CodeLabClient({
                 {v === 'today' ? "Today's 5" : 'All lessons'}
               </button>
             ))}
+          </div>
+
+          {/* XP bar in sidebar */}
+          <div className="px-3 py-3 border-b border-gray-50">
+            <XpBar levelInfo={levelInfo} totalXp={totalXp} theme={theme} compact />
           </div>
 
           <div className="flex-1 overflow-y-auto py-3">
@@ -280,18 +338,24 @@ export function CodeLabClient({
               tier={tier}
               alreadyCompleted={quizCompleted}
               savedScore={quizScore}
-              onComplete={handleQuizComplete}
+              onComplete={(score, awards, newLevelInfo, newTotalXp) => handleQuizComplete(score, awards, newLevelInfo, newTotalXp)}
               onBack={() => setView('today')}
             />
           ) : dailyComplete && todayLessons.every(l => todayCompleted.includes(l.id)) && view === 'today'
               && currentLesson && todayCompleted.includes(currentLesson.id)
               && !todayLessons.find(l => !todayCompleted.includes(l.id)) ? (
             /* All today's lessons done — show completion screen */
-            <div className="h-full flex items-center justify-center p-6">
-              <div className="text-center max-w-sm">
+            <div className="h-full overflow-y-auto flex items-start justify-center p-6">
+              <div className="text-center max-w-sm w-full pt-4">
                 <div className="text-5xl mb-4">🎉</div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Today's done!</h2>
-                <p className="text-gray-500 mb-6">You completed all 5 lessons for today. Come back tomorrow for 5 new ones!</p>
+                <p className="text-gray-500 mb-5">You completed all 5 lessons. Come back tomorrow for 5 new ones!</p>
+
+                {/* XP card */}
+                <div className="mb-5">
+                  <XpBar levelInfo={levelInfo} totalXp={totalXp} theme={theme} />
+                </div>
+
                 <div className="flex flex-col gap-3">
                   {!quizCompleted && (
                     <button
@@ -299,7 +363,7 @@ export function CodeLabClient({
                       className="flex items-center justify-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold px-6 py-3 rounded-2xl transition-all text-sm"
                     >
                       <Zap className="h-4 w-4" />
-                      Take today's optional quiz!
+                      Take today's optional quiz! (+up to 80 XP)
                     </button>
                   )}
                   {quizCompleted && (

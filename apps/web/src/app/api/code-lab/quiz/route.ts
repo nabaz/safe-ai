@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@kidai/db'
 import { getChildSession } from '@/lib/session'
 import { getTodayDate } from '@/components/child/code-lab/daily-engine'
+import { awardPoints, getTotalXp, getLevelInfo, POINTS } from '@/lib/points'
 import { getLessonsForTier } from '@/components/child/code-lab/curriculum'
 import type { LessonTier } from '@/components/child/code-lab/curriculum'
 import Groq from 'groq-sdk'
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { childId } = session
-  const { score } = await req.json()
+  const { score, totalQuestions = 5 } = await req.json()
   const today = getTodayDate()
 
   await prisma.dailyCodeSession.updateMany({
@@ -116,5 +117,34 @@ export async function POST(req: NextRequest) {
     data: { quizCompleted: true, quizScore: score },
   })
 
-  return NextResponse.json({ success: true })
+  const awards: Array<{ points: number; reason: string }> = []
+
+  // Award XP for each correct answer (one ledger entry per correct answer)
+  for (let i = 0; i < score; i++) {
+    await awardPoints({
+      childId,
+      reason: 'QUIZ_CORRECT',
+      description: `Quiz correct answer ${i + 1}/${totalQuestions}`,
+      metadata: { score, totalQuestions },
+    })
+  }
+  if (score > 0) {
+    awards.push({ points: score * POINTS.QUIZ_CORRECT, reason: `${score} correct answer${score !== 1 ? 's' : ''} +${score * POINTS.QUIZ_CORRECT} XP` })
+  }
+
+  // Perfect score bonus
+  if (score === totalQuestions) {
+    const r = await awardPoints({
+      childId,
+      reason: 'QUIZ_PERFECT',
+      description: 'Perfect quiz score! 🏆',
+      metadata: { score },
+    })
+    awards.push({ points: r.awarded, reason: `Perfect score bonus +${POINTS.QUIZ_PERFECT} XP` })
+  }
+
+  const totalXp = await getTotalXp(childId)
+  const levelInfo = getLevelInfo(totalXp)
+
+  return NextResponse.json({ success: true, awards, totalXp, levelInfo })
 }

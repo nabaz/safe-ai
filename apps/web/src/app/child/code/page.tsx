@@ -4,6 +4,7 @@ import { prisma } from '@kidai/db'
 import { CodeLabClient } from '@/components/child/code-lab/code-lab-client'
 import { selectDailyLessons, getTodayDate, getTodayKey } from '@/components/child/code-lab/daily-engine'
 import type { LessonTier } from '@/components/child/code-lab/curriculum'
+import { getTotalXp, getLevelInfo } from '@/lib/points'
 
 export default async function CodeLabPage() {
   const session = await getChildSession()
@@ -39,6 +40,8 @@ export default async function CodeLabPage() {
 
   const todayCompletedIds = dailySession.lessonIds.filter(id => completedIds.includes(id))
   const dailyComplete = dailySession.lessonIds.every(id => completedIds.includes(id))
+  const totalXp = await getTotalXp(childId)
+  const levelInfo = getLevelInfo(totalXp)
 
   return (
     <CodeLabClient
@@ -49,6 +52,8 @@ export default async function CodeLabPage() {
       dailyComplete={dailyComplete}
       quizCompleted={dailySession.quizCompleted}
       quizScore={dailySession.quizScore ?? null}
+      totalXp={totalXp}
+      levelInfo={levelInfo}
     />
   )
 }
