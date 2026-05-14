@@ -1,0 +1,242 @@
+// KidAI Playground — Prisma Schema
+// COPPA/GDPR-K compliant: minimal data, no behavioural tracking
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Parent Account ────────────────────────────────────────────────────────────
+
+model Parent {
+  id                  String         @id @default(cuid())
+  email               String         @unique
+  passwordHash        String
+  displayName         String
+  emailVerified       Boolean        @default(false)
+  emailVerifiedAt     DateTime?
+  // COPPA consent — timestamp + IP stored for compliance audit
+  consentGiven        Boolean        @default(false)
+  consentGivenAt      DateTime?
+  consentIpAddress    String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  children            ChildProfile[]
+  alerts              Alert[]
+
+  @@map("parents")
+}
+
+// ─── Child Profile ─────────────────────────────────────────────────────────────
+
+model ChildProfile {
+  id                  String             @id @default(cuid())
+  parentId            String
+  parent              Parent             @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  displayName         String
+  dateOfBirth         DateTime
+  ageTier             AgeTier            @default(EXPLORER)
+  avatarEmoji         String             @default("🦊")
+
+  // Access PIN — hashed, set by parent, used by child to log in
+  pinHash             String
+  isPaused            Boolean            @default(false)
+
+  // Time controls
+  dailyLimitMinutes   Int                @default(60)
+  blackoutStart       String?            // "HH:MM" format
+  blackoutEnd         String?            // "HH:MM" format
+
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  conversations       Conversation[]
+  topicRestrictions   TopicRestriction[]
+  customTopics        CustomTopic[]
+  usageLogs           DailyUsageLog[]
+  alerts              Alert[]
+  codeLessonProgress  CodeLessonProgress[]
+  dailyCodeSessions   DailyCodeSession[]
+
+  @@map("child_profiles")
+}
+
+// ─── Topic Restrictions ────────────────────────────────────────────────────────
+
+model TopicRestriction {
+  id              String           @id @default(cuid())
+  childId         String
+  child           ChildProfile     @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  category        TopicCategory
+  isBlocked       Boolean          @default(false)
+  customKeywords  String[]         @default([])
+
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([childId, category])
+  @@map("topic_restrictions")
+}
+
+// ─── Custom Topics (parent-defined, whitelisted for AI) ────────────────────────
+
+model CustomTopic {
+  id              String        @id @default(cuid())
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  name            String        // e.g. "Music", "Football", "Minecraft"
+  description     String?       // Optional hint for the AI, e.g. "age-appropriate music topics"
+  isActive        Boolean       @default(true)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("custom_topics")
+}
+
+// ─── Code Lab Progress ────────────────────────────────────────────────────────
+
+model CodeLessonProgress {
+  id              String        @id @default(cuid())
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  lessonId        String        // matches Lesson.id in curriculum.ts
+  completedAt     DateTime      @default(now())
+
+  @@unique([childId, lessonId])
+  @@map("code_lesson_progress")
+}
+
+model DailyCodeSession {
+  id              String        @id @default(cuid())
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  date            DateTime      // midnight UTC
+  lessonIds       String[]      // 5 lesson IDs assigned for the day
+  completedIds    String[]      @default([]) // which of today's 5 are done
+  quizCompleted   Boolean       @default(false)
+  quizScore       Int?
+
+  @@unique([childId, date])
+  @@map("daily_code_sessions")
+}
+
+// ─── Conversations ─────────────────────────────────────────────────────────────
+
+model Conversation {
+  id              String        @id @default(cuid())
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  title           String?       // Auto-generated from first message
+  startedAt       DateTime      @default(now())
+  endedAt         DateTime?
+
+  messages        Message[]
+
+  @@map("conversations")
+}
+
+// ─── Messages ──────────────────────────────────────────────────────────────────
+
+model Message {
+  id                String        @id @default(cuid())
+  conversationId    String
+  conversation      Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role              MessageRole
+  content           String        @db.Text
+
+  // Moderation metadata
+  inputFlagged      Boolean       @default(false)
+  outputFlagged     Boolean       @default(false)
+  flagReason        String?
+  moderationScore   Float?
+
+  createdAt         DateTime      @default(now())
+
+  alerts            Alert[]
+
+  @@map("messages")
+}
+
+// ─── Daily Usage Logs ──────────────────────────────────────────────────────────
+
+model DailyUsageLog {
+  id              String        @id @default(cuid())
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  date            DateTime      // Date only (stored as midnight UTC)
+  minutesUsed     Int           @default(0)
+
+  @@unique([childId, date])
+  @@map("daily_usage_logs")
+}
+
+// ─── Alerts ────────────────────────────────────────────────────────────────────
+
+model Alert {
+  id              String        @id @default(cuid())
+  parentId        String
+  parent          Parent        @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  messageId       String?
+  message         Message?      @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  alertType       AlertType
+  description     String
+  read            Boolean       @default(false)
+  readAt          DateTime?
+
+  createdAt       DateTime      @default(now())
+
+  @@map("alerts")
+}
+
+// ─── Enums ─────────────────────────────────────────────────────────────────────
+
+enum AgeTier {
+  EXPLORER  // 4–7
+  BUILDER   // 8–11
+  CREATOR   // 12–15
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum AlertType {
+  INPUT_BLOCKED
+  OUTPUT_FLAGGED
+  TIME_LIMIT_REACHED
+  BLACKOUT_ATTEMPTED
+}
+
+enum TopicCategory {
+  ANIMALS
+  SCIENCE
+  HISTORY
+  GEOGRAPHY
+  CREATIVE_WRITING
+  CODING
+  CURRENT_EVENTS
+  DEBATE
+  ADVANCED_STEM
+  NATURE
+  COUNTING
+  COLORS
+  STORIES
+  SPORTS
+}
