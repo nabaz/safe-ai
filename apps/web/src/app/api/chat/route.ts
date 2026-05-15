@@ -5,7 +5,7 @@ import { getChildSession } from '@/lib/session'
 import { checkAccessAllowed, incrementUsage } from '@/lib/usage'
 import { createAlert } from '@/lib/alerts'
 import { runInputPipeline, runOutputPipeline } from '@kidai/moderation'
-import { buildBlockedMessage, buildSystemPrompt, getChatClient, AGE_TIER_CONFIGS } from '@kidai/ai'
+import { buildBlockedMessage, buildSystemPrompt, getAiClient, getChatClient, AGE_TIER_CONFIGS } from '@kidai/ai'
 import type { TopicCategory } from '@kidai/shared'
 
 const chatSchema = z.object({
@@ -18,7 +18,8 @@ export async function POST(req: NextRequest) {
   // Treat empty string the same as unset
   const hasGroq = !!process.env.GROQ_API_KEY?.trim()
   const hasOpenAI = !!process.env.OPENAI_API_KEY?.trim()
-  if (!hasGroq && !hasOpenAI) {
+  const hasGemini = !!process.env.GEMINI_API_KEY?.trim()
+  if (!hasGroq && !hasOpenAI && !hasGemini) {
     return NextResponse.json(
       { error: "I'm not quite ready yet! Ask a parent to finish setting me up." },
       { status: 503 }
@@ -166,14 +167,15 @@ export async function POST(req: NextRequest) {
   const systemPrompt = buildSystemPrompt(tier, displayName, blockedTopics, customKeywords, customTopics)
 
   // 8. STREAMING RESPONSE
-  const { client, model } = getChatClient()
+  const { model } = getChatClient()
+  const aiClient = getAiClient()
 
   const stream = new ReadableStream({
     async start(controller) {
       let fullResponse = ''
 
       try {
-        const aiStream = await (client as any).chat.completions.create({
+        const aiStream = await aiClient.chat.completions.create({
           model,
           messages: [
             { role: 'system', content: systemPrompt },

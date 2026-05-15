@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { ChildControls } from '@/components/parent/child-controls'
 import { ChildAccessCard } from '@/components/parent/child-access-card'
 import { TopicManager } from '@/components/parent/topic-manager'
-import { ArrowLeft, MessageSquare } from 'lucide-react'
+import { ArrowLeft, MessageSquare, Code2, Zap, TrendingUp } from 'lucide-react'
 
 export default async function ChildDetailPage({
   params,
@@ -40,6 +40,10 @@ export default async function ChildDetailPage({
             select: { content: true, createdAt: true, inputFlagged: true, outputFlagged: true },
           },
         },
+      },
+      codeLessonProgress: true,
+      dailyChallenges: {
+        where: { date: todayDate },
       },
     },
   })
@@ -86,6 +90,47 @@ export default async function ChildDetailPage({
             }`}
             style={{ width: `${usagePercent}%` }}
           />
+        </div>
+      </div>
+
+      {/* Code Lab Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200 p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <Code2 className="h-5 w-5 text-blue-600" />
+            <h3 className="text-sm font-semibold text-blue-900">Lessons Completed</h3>
+          </div>
+          <p className="text-3xl font-bold text-blue-900">{child.codeLessonProgress.length}</p>
+          <p className="text-xs text-blue-700 mt-1">Static curriculum lessons</p>
+        </div>
+
+        <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl border border-purple-200 p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="h-5 w-5 text-purple-600" />
+            <h3 className="text-sm font-semibold text-purple-900">Today's Challenges</h3>
+          </div>
+          <p className="text-3xl font-bold text-purple-900">
+            {child.dailyChallenges.length > 0 
+              ? child.dailyChallenges[0]?.completedIds?.length ?? 0 
+              : 0}
+            <span className="text-sm text-purple-700 ml-1">/5</span>
+          </p>
+          <p className="text-xs text-purple-700 mt-1">AI-generated daily challenges</p>
+        </div>
+
+        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-2xl border border-green-200 p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <TrendingUp className="h-5 w-5 text-green-600" />
+            <h3 className="text-sm font-semibold text-green-900">Activity</h3>
+          </div>
+          <p className="text-3xl font-bold text-green-900">
+            {child.codeLessonProgress.length > 0 ? '✅' : '—'}
+          </p>
+          <p className="text-xs text-green-700 mt-1">
+            {child.codeLessonProgress.length > 0 
+              ? 'Actively coding'
+              : 'Not started yet'}
+          </p>
         </div>
       </div>
 

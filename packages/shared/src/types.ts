@@ -27,6 +27,8 @@ export type TopicCategory =
   | 'COLORS'
   | 'STORIES'
   | 'SPORTS'
+  | 'MATH'
+  | 'ALGORITHMS'
 
 // Moderation result from the safety pipeline
 export interface ModerationResult {

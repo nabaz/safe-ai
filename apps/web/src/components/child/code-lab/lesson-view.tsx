@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { cn } from '@/lib/cn'
-import { Play, Lightbulb, CheckCircle, XCircle, ChevronRight, RotateCcw, BookOpen } from 'lucide-react'
+import { Play, Lightbulb, CheckCircle, XCircle, ChevronRight, RotateCcw, BookOpen, Zap } from 'lucide-react'
 import type { Lesson } from './curriculum'
 import { runPython } from './python-runner'
 import ReactMarkdown from 'react-markdown'
@@ -21,10 +21,17 @@ const TIER_THEME = {
   CREATOR:  { bg: 'bg-purple-600', light: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', badge: 'bg-purple-100 text-purple-700' },
 }
 
+const SUBJECT_BADGE = {
+  coding: { label: 'Python', color: 'bg-yellow-100 text-yellow-700 border border-yellow-200' },
+  math:   { label: 'Math',   color: 'bg-pink-100 text-pink-700 border border-pink-200' },
+}
+
 type Status = 'idle' | 'running' | 'passed' | 'failed' | 'error'
 
 export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
   const theme = TIER_THEME[tier as keyof typeof TIER_THEME] ?? TIER_THEME.BUILDER
+  const subjectBadge = lesson.subject ? SUBJECT_BADGE[lesson.subject] : SUBJECT_BADGE.coding
+
   const [code, setCode] = useState(lesson.starterCode)
   const [output, setOutput] = useState<string[]>([])
   const [status, setStatus] = useState<Status>('idle')
@@ -73,18 +80,35 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Lesson header */}
-      <div className={`${theme.bg} px-5 py-4 flex items-center justify-between flex-shrink-0`}>
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{lesson.emoji}</span>
-          <div>
-            <p className="text-white font-bold">{lesson.title}</p>
-            <p className="text-white/70 text-xs">{lesson.unit}</p>
+      <div className={`${theme.bg} px-5 py-4 flex-shrink-0`}>
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{lesson.emoji}</span>
+            <div>
+              <div className="flex items-center gap-2 mb-0.5">
+                <p className="text-white font-bold">{lesson.title}</p>
+                {passed && (
+                  <div className="flex items-center gap-1 bg-white/20 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+                    <CheckCircle className="h-3 w-3" />
+                    Done
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="text-white/70 text-xs">{lesson.unit}</p>
+                <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded-full ${subjectBadge.color}`}>
+                  {subjectBadge.label}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-        {passed && (
-          <div className="flex items-center gap-1.5 bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
-            <CheckCircle className="h-3.5 w-3.5" />
-            Complete!
+
+        {/* Real-world use */}
+        {lesson.realWorldUse && (
+          <div className="mt-3 flex items-center gap-1.5 bg-white/10 rounded-lg px-3 py-1.5">
+            <Zap className="h-3 w-3 text-white/60 flex-shrink-0" />
+            <p className="text-white/80 text-xs font-mono">{lesson.realWorldUse}</p>
           </div>
         )}
       </div>
@@ -127,7 +151,10 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
 
             {/* Example */}
             <div className="mt-3">
-              <p className="text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">Example</p>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Example</p>
+                <span className="text-xs font-mono text-gray-400">Python</span>
+              </div>
               <pre className="bg-gray-900 text-green-300 rounded-xl p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
                 {lesson.example}
               </pre>
@@ -163,12 +190,16 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
               Reset
             </button>
           </div>
-          <div className="relative rounded-xl overflow-hidden border border-gray-200">
-            <div className="absolute top-0 left-0 right-0 h-8 bg-gray-800 flex items-center px-3 gap-1.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
-              <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-              <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
-              <span className="text-gray-500 text-xs ml-2 font-mono">main.py</span>
+          <div className="relative rounded-xl overflow-hidden border border-gray-700 shadow-lg">
+            {/* Editor chrome */}
+            <div className="bg-gray-800 flex items-center justify-between px-3 py-2 border-b border-gray-700">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+              </div>
+              <span className="text-gray-400 text-xs font-mono">main.py</span>
+              <span className="text-gray-600 text-xs font-mono">Python 3</span>
             </div>
             <textarea
               value={code}
@@ -177,7 +208,7 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
                 if (status !== 'idle') setStatus('idle')
               }}
               spellCheck={false}
-              className="w-full bg-gray-900 text-gray-100 font-mono text-sm p-4 pt-10 resize-none focus:outline-none leading-relaxed"
+              className="w-full bg-gray-900 text-gray-100 font-mono text-sm p-4 resize-none focus:outline-none leading-relaxed"
               rows={Math.max(6, code.split('\n').length + 2)}
               style={{ minHeight: '140px' }}
             />
@@ -200,16 +231,14 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
           </button>
 
           {/* Hint button */}
-          {status === 'failed' || status === 'error' ? (
-            hintIndex < lesson.hints.length - 1 ? (
-              <button
-                onClick={showNextHint}
-                className="flex items-center gap-1.5 text-sm text-yellow-600 hover:text-yellow-800 font-medium"
-              >
-                <Lightbulb className="h-4 w-4" />
-                Get a hint
-              </button>
-            ) : null
+          {(status === 'failed' || status === 'error') && hintIndex < lesson.hints.length - 1 ? (
+            <button
+              onClick={showNextHint}
+              className="flex items-center gap-1.5 text-sm text-yellow-600 hover:text-yellow-800 font-medium"
+            >
+              <Lightbulb className="h-4 w-4" />
+              Get a hint
+            </button>
           ) : null}
         </div>
 
@@ -243,7 +272,7 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
                 </span>
               )}
             </div>
-            <div className="bg-gray-900 rounded-xl p-3 font-mono text-sm">
+            <div className="bg-gray-900 rounded-xl p-3 font-mono text-sm border border-gray-700">
               {error ? (
                 <p className="text-red-400">{error}</p>
               ) : (
@@ -266,8 +295,13 @@ export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
         {passed && (
           <div className="mx-4 mb-6 bg-green-50 border border-green-200 rounded-2xl p-5 text-center">
             <p className="text-3xl mb-2">🎉</p>
-            <p className="font-bold text-green-800 mb-1">You got it!</p>
-            <p className="text-sm text-green-700 mb-4">Your code works perfectly!</p>
+            <p className="font-bold text-green-800 mb-1">Challenge passed!</p>
+            <p className="text-sm text-green-700 mb-1">Your code works perfectly.</p>
+            {lesson.realWorldUse && (
+              <p className="text-xs text-green-600 font-mono mb-4 bg-green-100 rounded-lg px-3 py-2">
+                {lesson.realWorldUse}
+              </p>
+            )}
             {onNext && (
               <button
                 onClick={onNext}

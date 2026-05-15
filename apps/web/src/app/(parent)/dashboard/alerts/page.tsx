@@ -55,8 +55,9 @@ export default async function AlertsPage() {
     data: { read: true, readAt: new Date() },
   })
 
-  const grouped = alerts.reduce(
-    (acc, alert) => {
+  // @ts-ignore - type inference issue with reduce
+  const grouped: Record<string, any[]> = alerts.reduce(
+    (acc: Record<string, any[]>, alert: any) => {
       const date = new Date(alert.createdAt).toLocaleDateString('en-US', {
         weekday: 'long',
         month: 'long',
@@ -65,7 +66,7 @@ export default async function AlertsPage() {
       ;(acc[date] ??= []).push(alert)
       return acc
     },
-    {} as Record<string, typeof alerts>
+    {}
   )
 
   return (
@@ -91,9 +92,9 @@ export default async function AlertsPage() {
                 {date}
               </h2>
               <div className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-50">
-                {dayAlerts.map((alert) => {
-                  const config = ALERT_CONFIG[alert.alertType]
-                  const Icon = config.icon
+                 {dayAlerts.map((alert) => {
+                   const config = ALERT_CONFIG[alert.alertType as keyof typeof ALERT_CONFIG]
+                   const Icon = config.icon
                   return (
                     <div key={alert.id} className="flex items-start gap-4 p-4">
                       <div

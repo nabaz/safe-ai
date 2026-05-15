@@ -70,7 +70,7 @@ export default async function ConversationPage({
       </div>
 
       <div className="flex flex-col gap-3">
-        {conversation.messages.map((msg) => {
+        {conversation.messages.map((msg: any) => {
           const isFlagged = msg.inputFlagged || msg.outputFlagged
           return (
             <div

@@ -263,7 +263,7 @@ export function ChildChat({ session }: ChildChatProps) {
           </div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{config.personaName}</p>
-            <p className="text-xs text-gray-400">Your AI learning friend</p>
+            <p className="text-xs text-gray-400">Your AI coding & maths tutor</p>
           </div>
         </div>
 
@@ -457,23 +457,23 @@ function AiBubble({ content, tier }: { content: string; tier: string }) {
 }
 
 function getPersonaEmoji(tier: string): string {
-  if (tier === 'EXPLORER') return '🦊'
+  if (tier === 'EXPLORER') return '🤖'
   if (tier === 'BUILDER') return '🔧'
   return '✨'
 }
 
 function getWelcomeMessage(tier: string, childName: string, personaName: string): string {
   if (tier === 'EXPLORER') {
-    return `Hi ${childName}! I'm ${personaName} the fox! 🦊 I love learning about animals, nature, stories, and so much more! What would you like to explore today?`
+    return `Hi ${childName}! I'm ${personaName} 🤖 — your coding and maths buddy! I love numbers, puzzles, and teaching how computers think. Want to try some maths, learn about animals, or hear a cool story? What shall we explore?`
   }
   if (tier === 'BUILDER') {
-    return `Hey ${childName}! I'm ${personaName}, and I'm excited to explore ideas with you! 🔧 We can talk about science, history, coding, creative writing... the possibilities are endless. What's on your mind?`
+    return `Hey ${childName}! I'm ${personaName} 🔧 — programmer, mathematician, and your personal tutor. We can tackle Python code, solve maths problems, explore science, or dig into history. I won't just give you answers — I'll help you figure them out. What are you working on?`
   }
-  return `Hello ${childName}! I'm ${personaName} ✨ — here to help you think deeply, explore ideas, and learn about the world. From STEM to current events, I'm ready to dive in. What would you like to discuss?`
+  return `Hello ${childName}. I'm Nova ✨ — software engineer, mathematician, and your rigorous thinking partner. Bring me your hardest coding challenges, trickiest maths problems, or biggest questions about the world. I'll guide you to the answer — not hand it to you. What shall we work on?`
 }
 
 function getPlaceholder(tier: string, personaName: string): string {
-  if (tier === 'EXPLORER') return `Ask ${personaName} anything!`
-  if (tier === 'BUILDER') return `What are you curious about?`
-  return `Ask a question or start a discussion...`
+  if (tier === 'EXPLORER') return `Ask ${personaName} about numbers, code, or anything!`
+  if (tier === 'BUILDER') return `Ask a maths question, coding problem, or anything...`
+  return `Bring your hardest problem — code, maths, science...`
 }

@@ -5,9 +5,9 @@ export const AGE_TIER_CONFIGS: Record<string, AgeTierConfig> = {
     tier: 'EXPLORER',
     label: 'Explorer',
     ageRange: '4–7',
-    personaName: 'Pip',
-    personaDescription: 'a friendly fox who loves learning',
-    allowedTopics: ['ANIMALS', 'NATURE', 'COUNTING', 'COLORS', 'STORIES', 'SPORTS'],
+    personaName: 'Byte',
+    personaDescription: 'a friendly robot coder who loves numbers and puzzles',
+    allowedTopics: ['ANIMALS', 'NATURE', 'COUNTING', 'COLORS', 'STORIES', 'SPORTS', 'MATH'],
     maxResponseLength: 150,   // word guidance in prompt
     maxTokens: 900,           // enough for school-task responses in simple language
     vocabularyLevel: 'simple',
@@ -17,7 +17,7 @@ export const AGE_TIER_CONFIGS: Record<string, AgeTierConfig> = {
     label: 'Builder',
     ageRange: '8–11',
     personaName: 'Max',
-    personaDescription: 'a curious inventor who encourages questions',
+    personaDescription: 'a programmer and mathematician who makes hard things click',
     allowedTopics: [
       'ANIMALS',
       'NATURE',
@@ -30,6 +30,7 @@ export const AGE_TIER_CONFIGS: Record<string, AgeTierConfig> = {
       'COLORS',
       'STORIES',
       'SPORTS',
+      'MATH',
     ],
     maxResponseLength: 400,
     maxTokens: 1200,
@@ -40,7 +41,7 @@ export const AGE_TIER_CONFIGS: Record<string, AgeTierConfig> = {
     label: 'Creator',
     ageRange: '12–15',
     personaName: 'Nova',
-    personaDescription: 'a thoughtful mentor who gives nuanced answers',
+    personaDescription: 'a software engineer and mathematician who thinks rigorously',
     allowedTopics: [
       'ANIMALS',
       'NATURE',
@@ -56,6 +57,8 @@ export const AGE_TIER_CONFIGS: Record<string, AgeTierConfig> = {
       'COLORS',
       'STORIES',
       'SPORTS',
+      'MATH',
+      'ALGORITHMS',
     ],
     maxResponseLength: 600,
     maxTokens: 2000,
@@ -69,7 +72,7 @@ export const TOPIC_LABELS: Record<TopicCategory, string> = {
   HISTORY: 'History',
   GEOGRAPHY: 'Geography',
   CREATIVE_WRITING: 'Creative Writing',
-  CODING: 'Coding',
+  CODING: 'Coding & Programming',
   CURRENT_EVENTS: 'Current Events',
   DEBATE: 'Debate & Discussion',
   ADVANCED_STEM: 'Advanced STEM',
@@ -78,6 +81,8 @@ export const TOPIC_LABELS: Record<TopicCategory, string> = {
   COLORS: 'Colors & Art',
   STORIES: 'Stories',
   SPORTS: 'Sports & Athletes',
+  MATH: 'Mathematics',
+  ALGORITHMS: 'Algorithms & Computer Science',
 }
 
 // Blocked topic categories (never allowed for any tier)

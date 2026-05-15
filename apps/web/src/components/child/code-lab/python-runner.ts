@@ -89,7 +89,17 @@ function transpileToJS(python: string): string {
 
     // ── Block-opening statements ──────────────────────────────────────────
 
-    // for i in range(...)
+    // for i in range(...): single-line version
+    const forRangeSingleLine = trimmed.match(/^for\s+(\w+)\s+in\s+range\(([^)]+)\)\s*:\s*(.+)$/)
+    if (forRangeSingleLine) {
+      const [, varName, rangeArgs, body] = forRangeSingleLine
+      output.push(jsIndent + `for (const ${varName} of range(${transpileExpr(rangeArgs)})) {`)
+      output.push(' '.repeat(jsIndent.length + 2) + transpileStmt(body) + ';')
+      output.push(jsIndent + '}')
+      continue
+    }
+
+    // for i in range(...): multi-line version
     const forRange = trimmed.match(/^for\s+(\w+)\s+in\s+range\((.+)\)\s*:$/)
     if (forRange) {
       output.push(jsIndent + `for (const ${forRange[1]} of range(${transpileExpr(forRange[2])})) {`)

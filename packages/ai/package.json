@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@kidai/shared": "workspace:*",
     "groq-sdk": "^1.2.0",
     "openai": "^4.78.1"

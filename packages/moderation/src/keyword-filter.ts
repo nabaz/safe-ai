@@ -28,6 +28,8 @@ const TOPIC_KEYWORDS: Record<TopicCategory, string[]> = {
   COLORS: ['color', 'colour', 'red', 'blue', 'green', 'paint', 'draw', 'art'],
   STORIES: ['story', 'tale', 'once upon', 'fairy', 'fable', 'adventure', 'hero'],
   SPORTS: ['sport', 'athlete', 'football', 'soccer', 'basketball', 'swimming', 'tennis', 'olympic'],
+  MATH: ['mathematics', 'algebra', 'geometry', 'equation', 'fraction', 'decimal', 'percentage', 'calculus', 'statistics', 'probability', 'theorem', 'proof'],
+  ALGORITHMS: ['algorithm', 'sorting', 'searching', 'binary', 'complexity', 'recursion', 'big-o', 'data structure', 'graph', 'tree', 'hash'],
 }
 
 /**

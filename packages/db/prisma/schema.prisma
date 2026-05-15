@@ -63,6 +63,7 @@ model ChildProfile {
   alerts              Alert[]
   codeLessonProgress  CodeLessonProgress[]
   dailyCodeSessions   DailyCodeSession[]
+  dailyChallenges     DailyChallenge[]
   pointsLedger        PointsLedger[]
 
   @@map("child_profiles")
@@ -129,6 +130,21 @@ model DailyCodeSession {
 
   @@unique([childId, date])
   @@map("daily_code_sessions")
+}
+
+// ─── AI Daily Challenges ──────────────────────────────────────────────────────
+
+model DailyChallenge {
+  id              String        @id @default(cuid())
+  childId         String
+  child           ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  date            DateTime      // midnight UTC
+  challenges      Json          // array of 5 challenge objects
+  completedIds    String[]      @default([]) // which of the 5 are done
+
+  @@unique([childId, date])
+  @@map("daily_challenges")
 }
 
 // ─── Points & XP ─────────────────────────────────────────────────────────────
@@ -267,4 +283,6 @@ enum TopicCategory {
   COLORS
   STORIES
   SPORTS
+  MATH
+  ALGORITHMS
 }

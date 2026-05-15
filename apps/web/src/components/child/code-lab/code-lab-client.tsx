@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { AGE_TIER_CONFIGS } from '@kidai/shared'
 import type { ChildSessionPayload } from '@kidai/shared'
 import { getLessonsForTier } from './curriculum'
@@ -9,11 +9,30 @@ import { DAILY_LESSON_COUNT } from './daily-engine'
 import { LessonView } from './lesson-view'
 import { DailyQuiz } from './daily-quiz'
 import { XpBar } from './xp-bar'
-import { MessageSquare, Menu, X, CheckCircle, Lock, Star, Trophy, Zap } from 'lucide-react'
+import { MessageSquare, Menu, X, CheckCircle, Lock, Star, Trophy, Zap, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/cn'
 import toast from 'react-hot-toast'
 import type { LevelInfo } from '@/lib/points'
+
+// Unified challenge type — works for both static lessons and AI-generated challenges
+interface DailyChallenge {
+  id: string
+  subject: 'coding' | 'math'
+  title: string
+  emoji: string
+  realWorldUse: string
+  concept: string
+  example: string
+  challenge: string
+  starterCode: string
+  solutionCode: string
+  expectedOutput: string
+  hints: string[]
+  unit?: string
+  unitIndex?: number
+  tier?: LessonTier
+}
 
 interface Props {
   session: ChildSessionPayload
@@ -33,10 +52,39 @@ const TIER_THEME = {
   CREATOR:  { bg: 'bg-purple-600', light: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-100', badge: 'bg-purple-100 text-purple-700' },
 }
 
+// Convert a DailyChallenge to a Lesson-compatible shape
+function challengeToLesson(c: DailyChallenge): Lesson {
+  return {
+    id: c.id,
+    tier: c.tier || 'BUILDER',
+    subject: c.subject,
+    unit: c.unit || 'Daily Challenge',
+    unitIndex: c.unitIndex ?? 0,
+    title: c.title,
+    emoji: c.emoji,
+    realWorldUse: c.realWorldUse,
+    concept: c.concept,
+    example: c.example,
+    challenge: c.challenge,
+    starterCode: c.starterCode,
+    solutionCode: c.solutionCode,
+    checkOutput: (output: string) => {
+      // For AI challenges, check if expected output keywords are in the output
+      const expected = c.expectedOutput.toLowerCase()
+      const actual = output.toLowerCase()
+      // Extract key numbers/words from expected
+      const tokens = expected.match(/[a-z]+|[0-9.]+/gi) || []
+      return tokens.some(t => actual.includes(t.toLowerCase()))
+    },
+    expectedHint: c.expectedOutput,
+    hints: c.hints,
+  }
+}
+
 export function CodeLabClient({
   session,
   completedIds: initialCompletedIds,
-  todayLessonIds,
+  todayLessonIds: _staticLessonIds,
   todayCompletedIds: initialTodayCompleted,
   dailyComplete: initialDailyComplete,
   quizCompleted: initialQuizCompleted,
@@ -56,22 +104,70 @@ export function CodeLabClient({
   const [totalXp, setTotalXp] = useState(initialTotalXp)
   const [levelInfo, setLevelInfo] = useState(initialLevelInfo)
 
-  // Today's lessons in order, with the full Lesson objects
-  const todayLessons = todayLessonIds
-    .map(id => allLessons.find(l => l.id === id))
-    .filter(Boolean) as Lesson[]
+  // AI-generated daily challenges
+  const [aiChallenges, setAiChallenges] = useState<DailyChallenge[]>([])
+  const [aiChallengesLoading, setAiChallengesLoading] = useState(true)
+
+  // Today's lessons — either AI-generated or static fallback
+  const [todayLessons, setTodayLessons] = useState<Lesson[]>([])
+
+  // Fetch AI-generated daily challenges on mount
+  useEffect(() => {
+    const fetchChallenges = async () => {
+      try {
+        const res = await fetch('/api/daily-challenges')
+        if (res.ok) {
+          const data = await res.json()
+          const challenges = data.challenges as DailyChallenge[]
+          setAiChallenges(challenges)
+          setTodayCompleted(data.completedIds || [])
+          if ((data.completedIds || []).length === 5) {
+            setDailyComplete(true)
+          }
+
+          // Convert to Lesson format
+          const lessons = challenges.map(c => challengeToLesson({
+            ...c,
+            tier,
+          }))
+          setTodayLessons(lessons)
+        } else {
+          // Fallback to static curriculum
+          const lessons = _staticLessonIds
+            .map(id => allLessons.find(l => l.id === id))
+            .filter(Boolean) as Lesson[]
+          setTodayLessons(lessons)
+        }
+      } catch {
+        // Fallback to static curriculum
+        const lessons = _staticLessonIds
+          .map(id => allLessons.find(l => l.id === id))
+          .filter(Boolean) as Lesson[]
+        setTodayLessons(lessons)
+      } finally {
+        setAiChallengesLoading(false)
+      }
+    }
+
+    fetchChallenges()
+  }, [])
 
   const [view, setView] = useState<'today' | 'all' | 'quiz'>('today')
-  const [currentLesson, setCurrentLesson] = useState<Lesson>(
-    // Start on first incomplete today's lesson, or first lesson
-    todayLessons.find(l => !initialTodayCompleted.includes(l.id)) ?? todayLessons[0] ?? allLessons[0]!
-  )
+  const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Set current lesson once todayLessons is loaded
+  useEffect(() => {
+    if (todayLessons.length > 0 && !currentLesson) {
+      const firstIncomplete = todayLessons.find(l => !todayCompleted.includes(l.id))
+      setCurrentLesson(firstIncomplete ?? todayLessons[0])
+    }
+  }, [todayLessons, todayCompleted, currentLesson])
 
   const todayDoneCount = todayCompleted.length
   const totalDone = completedIds.length
 
-  // Mark a lesson complete — calls API, awards XP, shows toast
+  // Mark a static lesson complete (from "All lessons" view)
   const handleLessonComplete = useCallback(async (lessonId: string) => {
     if (completedIds.includes(lessonId)) return
 
@@ -83,46 +179,104 @@ export function CodeLabClient({
     const data = await res.json()
 
     const newCompleted = [...completedIds, lessonId]
-    const newTodayCompleted = [...todayCompleted, ...(todayLessonIds.includes(lessonId) ? [lessonId] : [])]
     setCompletedIds(newCompleted)
-    setTodayCompleted(newTodayCompleted)
 
-    const allTodayDone = todayLessonIds.every(id => newCompleted.includes(id))
-    if (allTodayDone) setDailyComplete(true)
-
-    // Update XP display
     if (data.totalXp !== undefined) {
-      const prevLevel = levelInfo.level
       setTotalXp(data.totalXp)
       setLevelInfo(data.levelInfo)
-
-      // Show XP toasts
       if (data.awards?.length) {
         data.awards.forEach((a: { points: number; reason: string }) => {
           toast.success(`+${a.points} XP — ${a.reason}`, { icon: '⚡', duration: 3000 })
         })
       }
-      // Level up celebration
-      if (data.levelInfo?.level > prevLevel) {
+      if (data.levelInfo?.level > levelInfo.level) {
         toast.success(
           `${data.levelInfo.emoji} Level up! You're now Level ${data.levelInfo.level} — ${data.levelInfo.title}!`,
           { duration: 5000, icon: '🎉' }
         )
       }
     }
-  }, [completedIds, todayCompleted, todayLessonIds, levelInfo])
+  }, [completedIds, levelInfo])
 
-  // Move to next lesson in today's list
-  const handleNext = useCallback(async () => {
-    await handleLessonComplete(currentLesson.id)
-    const currentIdx = todayLessons.findIndex(l => l.id === currentLesson.id)
-    const nextIncomplete = todayLessons.find((l, i) => i > currentIdx && !completedIds.includes(l.id) && l.id !== currentLesson.id)
-    if (nextIncomplete) {
-      setCurrentLesson(nextIncomplete)
-    } else if (dailyComplete || todayLessonIds.every(id => [...completedIds, currentLesson.id].includes(id))) {
-      setView('today') // Show completion screen
+  // Complete a daily challenge (AI-generated)
+  const handleDailyChallengeComplete = useCallback(async (challengeId: string) => {
+    if (todayCompleted.includes(challengeId)) return
+
+    // Mark as completed in DB
+    await fetch('/api/daily-challenges', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId }),
+    })
+
+    // Also mark in static curriculum if it maps to one
+    const isStaticLesson = allLessons.some(l => l.id === challengeId)
+    if (isStaticLesson) {
+      await handleLessonComplete(challengeId)
     }
-  }, [currentLesson, todayLessons, completedIds, handleLessonComplete, dailyComplete, todayLessonIds])
+
+    const newTodayCompleted = [...todayCompleted, challengeId]
+    setTodayCompleted(newTodayCompleted)
+
+    // Award XP for daily challenge
+    const res = await fetch('/api/code-lab', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lessonId: challengeId }),
+    })
+    const data = await res.json()
+
+    if (data.totalXp !== undefined) {
+      setTotalXp(data.totalXp)
+      setLevelInfo(data.levelInfo)
+      if (data.awards?.length) {
+        data.awards.forEach((a: { points: number; reason: string }) => {
+          toast.success(`+${a.points} XP — ${a.reason}`, { icon: '⚡', duration: 3000 })
+        })
+      }
+    }
+
+    if (newTodayCompleted.length === 5) {
+      setDailyComplete(true)
+    }
+  }, [todayCompleted, allLessons, handleLessonComplete])
+
+  // Move to next lesson — handles both "Today's 5" and "All lessons" views
+  const handleNext = useCallback(async () => {
+    if (!currentLesson) return
+    const lessonId = currentLesson.id
+
+    // Complete the lesson/challenge
+    if (view === 'today') {
+      await handleDailyChallengeComplete(lessonId)
+    } else {
+      await handleLessonComplete(lessonId)
+    }
+
+    // Find next lesson based on current view
+    if (view === 'today') {
+      // Today's view: find next in todayLessons array
+      const currentIdx = todayLessons.findIndex(l => l.id === lessonId)
+      const newCompleted = [...todayCompleted, lessonId]
+      const nextIncomplete = todayLessons.find((l, i) => i > currentIdx && !newCompleted.includes(l.id))
+      if (nextIncomplete) {
+        setCurrentLesson(nextIncomplete)
+      } else if (newCompleted.length === 5) {
+        setView('today')
+      }
+    } else {
+      // All lessons view: find next lesson in the SAME UNIT
+      const unitLessons = allLessons
+        .filter(l => l.unit === currentLesson.unit)
+        .sort((a, b) => a.unitIndex - b.unitIndex)
+      const currentUnitIdx = unitLessons.findIndex(l => l.id === lessonId)
+      const nextInUnit = unitLessons.find((l, i) => i > currentUnitIdx && !completedIds.includes(l.id))
+      if (nextInUnit) {
+        setCurrentLesson(nextInUnit)
+      }
+      // If no more in this unit, stay on current lesson (show completion screen)
+    }
+  }, [currentLesson, view, todayLessons, todayCompleted, allLessons, completedIds, handleDailyChallengeComplete, handleLessonComplete])
 
   const handleQuizComplete = (score: number, awards?: Array<{ points: number; reason: string }>, newLevelInfo?: LevelInfo, newTotalXp?: number) => {
     setQuizCompleted(true)
@@ -148,11 +302,9 @@ export function CodeLabClient({
     }
   }
 
-  // Determine if a lesson is accessible:
-  // - Today's lessons: accessible in order (complete prev to unlock next)
-  // - All lessons: accessible if previous in same unit completed
+  // Determine if a lesson is accessible
   const isLessonAccessible = (lesson: Lesson, inToday: boolean): boolean => {
-    if (completedIds.includes(lesson.id)) return true // already done = always accessible for review
+    if (completedIds.includes(lesson.id)) return true
     if (inToday) {
       const idx = todayLessons.findIndex(l => l.id === lesson.id)
       if (idx === 0) return true
@@ -166,6 +318,17 @@ export function CodeLabClient({
     return lessonIdx === 0 || completedIds.includes(unitLessons[lessonIdx - 1]!.id)
   }
 
+  if (aiChallengesLoading || !currentLesson) {
+    return (
+      <div className="h-screen flex flex-col bg-gray-50 items-center justify-center">
+        <div className="flex items-center gap-3 text-gray-400">
+          <Sparkles className="h-5 w-5 animate-pulse" />
+          <p className="text-sm">Generating today's challenges...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* Header */}
@@ -174,16 +337,18 @@ export function CodeLabClient({
           <button onClick={() => setSidebarOpen(v => !v)} className="lg:hidden text-gray-400 hover:text-gray-700 mr-1">
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
-          <span className="text-xl">💻</span>
+          <div className="w-7 h-7 bg-gray-900 rounded-lg flex items-center justify-center font-mono text-xs font-black text-green-400 flex-shrink-0">
+            &gt;_
+          </div>
           <div>
-            <p className="font-bold text-gray-900 text-sm">Code Lab</p>
-            <p className="text-xs text-gray-400">{totalDone} lessons completed</p>
+            <p className="font-bold text-gray-900 text-sm">CodeMind Lab</p>
+            <p className="text-xs text-gray-400">
+              {aiChallenges.length > 0 ? 'AI-generated daily challenges' : `${totalDone} lessons completed`}
+            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Daily progress pills */}
-          {/* XP bar — compact */}
           <div className="hidden sm:block">
             <XpBar levelInfo={levelInfo} totalXp={totalXp} theme={theme} compact />
           </div>
@@ -203,7 +368,7 @@ export function CodeLabClient({
             <span className="text-xs text-gray-400 ml-1">{todayDoneCount}/{DAILY_LESSON_COUNT}</span>
           </div>
 
-          {/* Quiz badge — only when daily is done */}
+          {/* Quiz badge */}
           {dailyComplete && !quizCompleted && (
             <button
               onClick={() => setView('quiz')}
@@ -244,7 +409,12 @@ export function CodeLabClient({
                   view === v ? `${theme.light} ${theme.text}` : 'text-gray-500 hover:bg-gray-50'
                 )}
               >
-                {v === 'today' ? "Today's 5" : 'All lessons'}
+                {v === 'today' ? (
+                  <span className="flex items-center justify-center gap-1">
+                    <Sparkles className="h-3 w-3" />
+                    Today's 5
+                  </span>
+                ) : 'All lessons'}
               </button>
             ))}
           </div>
@@ -256,7 +426,6 @@ export function CodeLabClient({
 
           <div className="flex-1 overflow-y-auto py-3">
             {view === 'today' || view === 'quiz' ? (
-              /* Today's lesson list */
               <div>
                 <p className="text-xs text-gray-400 px-4 mb-2 font-medium">
                   {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
@@ -283,7 +452,9 @@ export function CodeLabClient({
                       <span className="text-base flex-shrink-0">{lesson.emoji}</span>
                       <div className="flex-1 min-w-0">
                         <p className={cn('text-xs font-medium truncate', isActive ? 'text-white' : '')}>{lesson.title}</p>
-                        <p className={cn('text-xs truncate', isActive ? 'text-white/70' : 'text-gray-400')}>{lesson.unit}</p>
+                        <p className={cn('text-xs truncate', isActive ? 'text-white/70' : 'text-gray-400')}>
+                          {lesson.subject === 'coding' ? 'Python' : 'Math'}
+                        </p>
                       </div>
                       {done
                         ? <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
@@ -295,7 +466,7 @@ export function CodeLabClient({
                   )
                 })}
 
-                {/* Quiz entry in sidebar */}
+                {/* Quiz entry */}
                 {dailyComplete && (
                   <button
                     onClick={() => { setView('quiz'); setSidebarOpen(false) }}
@@ -314,7 +485,6 @@ export function CodeLabClient({
                 )}
               </div>
             ) : (
-              /* All lessons list */
               <AllLessonsNav
                 lessons={allLessons}
                 completedIds={completedIds}
@@ -344,14 +514,13 @@ export function CodeLabClient({
           ) : dailyComplete && todayLessons.every(l => todayCompleted.includes(l.id)) && view === 'today'
               && currentLesson && todayCompleted.includes(currentLesson.id)
               && !todayLessons.find(l => !todayCompleted.includes(l.id)) ? (
-            /* All today's lessons done — show completion screen */
             <div className="h-full overflow-y-auto flex items-start justify-center p-6">
               <div className="text-center max-w-sm w-full pt-4">
                 <div className="text-5xl mb-4">🎉</div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Today's done!</h2>
-                <p className="text-gray-500 mb-5">You completed all 5 lessons. Come back tomorrow for 5 new ones!</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Daily session complete!</h2>
+                <p className="text-gray-500 mb-1">You completed all 5 challenges.</p>
+                <p className="text-xs text-gray-400 font-mono mb-5">Come back tomorrow for 5 new AI-generated challenges.</p>
 
-                {/* XP card */}
                 <div className="mb-5">
                   <XpBar levelInfo={levelInfo} totalXp={totalXp} theme={theme} />
                 </div>
@@ -384,7 +553,13 @@ export function CodeLabClient({
               lesson={currentLesson}
               tier={tier}
               onNext={handleNext}
-              isLast={todayLessons[todayLessons.length - 1]?.id === currentLesson.id}
+              isLast={view === 'today'
+                ? todayLessons[todayLessons.length - 1]?.id === currentLesson.id
+                : allLessons
+                    .filter(l => l.unit === currentLesson.unit)
+                    .sort((a, b) => a.unitIndex - b.unitIndex)
+                    .pop()?.id === currentLesson.id
+              }
             />
           )}
         </main>
