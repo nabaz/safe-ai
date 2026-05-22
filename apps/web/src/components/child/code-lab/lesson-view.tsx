@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { cn } from '@/lib/cn'
 import { Play, Lightbulb, CheckCircle, XCircle, ChevronRight, RotateCcw, BookOpen, Zap } from 'lucide-react'
 import type { Lesson } from './curriculum'
-import { runPython } from './python-runner'
+import { runPython, preloadPyodide } from './python-runner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -28,48 +28,152 @@ const SUBJECT_BADGE = {
 
 type Status = 'idle' | 'running' | 'passed' | 'failed' | 'error'
 
+/**
+ * Build a Python snippet that exercises any function(s) the user defined.
+ * Tries, in order:
+ *   1. Lift the test calls verbatim from the lesson's solutionCode (best match
+ *      — uses the exact inputs the lesson author expected).
+ *   2. Synthesize a `print(fn(...))` call by reading the lesson's expectedHint:
+ *      if it's a list literal, pass those items doubled-up as the first arg
+ *      (so duplicate-finder lessons see duplicates); otherwise fall back to a
+ *      sensible default based on the parameter's name.
+ *
+ * Returns '' if the user's code has no `def` (nothing to call).
+ */
+function buildTestRunner(userCode: string, lesson: Lesson): string {
+  const defs = [...userCode.matchAll(/^def\s+(\w+)\s*\(([^)]*)\)/gm)]
+    .map(m => ({ name: m[1]!, params: m[2]! }))
+  if (defs.length === 0) return ''
+
+  // 1) Try lifting top-level calls from solutionCode — those use the exact
+  // inputs the lesson author intended.
+  const nameRegex = new RegExp(`\\b(${defs.map(d => d.name).join('|')})\\s*\\(`)
+  const lifted: string[] = []
+  for (const line of lesson.solutionCode.split('\n')) {
+    if (/^\s/.test(line)) continue
+    const t = line.trim()
+    if (!t || t.startsWith('#') || t.startsWith('def ')) continue
+    if (nameRegex.test(line)) lifted.push(line)
+  }
+  if (lifted.length > 0) return lifted.join('\n')
+
+  // 2) Synthesize a call from the first function's signature.
+  const fn = defs[0]!
+  const paramNames = fn.params.split(',').map(p => p.trim().replace(/[=:].*$/, '')).filter(Boolean)
+
+  // Detect whether the function returns something useful. If it doesn't use
+  // `return`, it's a void/print-only function — calling it directly avoids the
+  // extra "None" line that `print(fn(...))` would tack on.
+  const fnBodyRegex = new RegExp(`def\\s+${fn.name}\\b[\\s\\S]*?(?=^def\\b|\\Z)`, 'm')
+  const fnBody = userCode.match(fnBodyRegex)?.[0] ?? ''
+  const hasReturn = /\breturn\b\s+\S/.test(fnBody)
+  const wrap = (call: string) => hasReturn ? `print(${call})` : call
+
+  if (paramNames.length === 0) return wrap(`${fn.name}()`)
+
+  // If the expected output is a list literal, double its items as a single-arg
+  // input so duplicate-finder-style challenges have something to find.
+  const listMatch = lesson.expectedHint.match(/^\s*\[([\s\S]+)\]\s*$/)
+  if (listMatch && paramNames.length === 1) {
+    const items = listMatch[1]!.trim()
+    return wrap(`${fn.name}([${items}, ${items}])`)
+  }
+
+  // Fall back to a sensible default per parameter name. Discriminate singular
+  // vs plural so `pet` gets a string and `pets` gets a list.
+  const args = paramNames.map(p => {
+    const plural = /s$/i.test(p) || /list|items|arr|array|nums|numbers|scores|prices/i.test(p)
+    if (/password|passwd|pwd/i.test(p)) return "'longpassword123'"
+    if (/email/i.test(p)) return "'kid@example.com'"
+    if (/list|items|arr|array|nums|numbers|scores|prices/i.test(p)) return '[1, 2, 3, 2, 4, 3, 5]'
+    if (/pet|animal/i.test(p)) return plural ? "['cat','dog','cat']" : "'dog'"
+    if (/count|num|^n$|index|^i$|size|age|score|weight|height/i.test(p)) return '8'
+    if (/text|string|^str$|message|msg|word|sentence/i.test(p)) return "'hello world'"
+    if (/name|label/i.test(p)) return "'bob'"
+    return "'test'"
+  })
+  return wrap(`${fn.name}(${args.join(', ')})`)
+}
+
 export function LessonView({ lesson, tier, onNext, isLast }: LessonViewProps) {
   const theme = TIER_THEME[tier as keyof typeof TIER_THEME] ?? TIER_THEME.BUILDER
   const subjectBadge = lesson.subject ? SUBJECT_BADGE[lesson.subject] : SUBJECT_BADGE.coding
 
-  const [code, setCode] = useState(lesson.starterCode)
+  // Keep the visual placeholder '___' in the starter code so users see exactly
+  // where to fill in their answers. Stripping it would leave invalid code like
+  // `x = ` with nothing on the right of `=`.
+  const sanitizeStarter = (s: string) => s
+
+  const [code, setCode] = useState(() => sanitizeStarter(lesson.starterCode))
   const [output, setOutput] = useState<string[]>([])
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [hintIndex, setHintIndex] = useState(-1)
   const [showConcept, setShowConcept] = useState(true)
 
-  const handleRun = useCallback(() => {
+  const handleRun = useCallback(async () => {
     setStatus('running')
     setError(null)
 
-    // Small delay so "running" state is visible
-    setTimeout(() => {
-      const result = runPython(code)
-      setOutput(result.output)
+    const result = await runPython(code)
+    setOutput(result.output)
 
-      if (result.error) {
-        setError(result.error)
-        setStatus('error')
-        return
-      }
+    if (result.error) {
+      setError(result.error)
+      setStatus('error')
+      return
+    }
 
-      const outputStr = result.output.join('\n')
-      if (lesson.checkOutput(outputStr)) {
-        setStatus('passed')
-      } else {
-        setStatus('failed')
+    const outputStr = result.output.join('\n')
+    if (lesson.checkOutput(outputStr)) {
+      setStatus('passed')
+      return
+    }
+
+    // Fallback: if the user defined functions but produced no output, run their
+    // code with the lesson's own test calls (extracted from solutionCode) so we
+    // exercise the user's function against the exact inputs the lesson expects.
+    if (result.output.length === 0) {
+      const testCalls = buildTestRunner(code, lesson)
+      if (testCalls) {
+        const augmented = code + '\n\n' + testCalls
+        const r2 = await runPython(augmented)
+        setOutput(r2.output)
+        if (!r2.error && lesson.checkOutput(r2.output.join('\n'))) {
+          setStatus('passed')
+          return
+        }
+        if (r2.error) {
+          setError(r2.error)
+          setStatus('error')
+          return
+        }
       }
-    }, 100)
+    }
+
+    setStatus('failed')
   }, [code, lesson])
 
   const handleReset = () => {
-    setCode(lesson.starterCode)
+    setCode(sanitizeStarter(lesson.starterCode))
     setOutput([])
     setStatus('idle')
     setError(null)
     setHintIndex(-1)
   }
+
+  // If the parent hands us a new lesson, reset the editor to the new starter code
+  // so switching lessons doesn't show stale output.
+  useEffect(() => {
+    setCode(sanitizeStarter(lesson.starterCode))
+    setOutput([])
+    setStatus('idle')
+    setError(null)
+    setHintIndex(-1)
+  }, [lesson.id])
+
+  // Warm up Pyodide as soon as the lesson opens so the first Run is fast.
+  useEffect(() => { preloadPyodide() }, [])
 
   const showNextHint = () => {
     setHintIndex((i) => Math.min(i + 1, lesson.hints.length - 1))

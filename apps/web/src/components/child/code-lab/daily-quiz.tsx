@@ -44,8 +44,14 @@ export function DailyQuiz({ tier, alreadyCompleted, savedScore, onComplete, onBa
     setError(null)
     try {
       const res = await fetch('/api/code-lab/quiz')
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        console.error('loadQuiz failed:', res.status, body)
+        setError('Could not load quiz. Please sign in and try again.')
+        setLoading(false)
+        return
+      }
       const data = await res.json()
-      if (!res.ok) { setError(data.error); setLoading(false); return }
       setQuestions(data.questions)
     } catch {
       setError('Could not load quiz. Try again!')
@@ -66,13 +72,25 @@ export function DailyQuiz({ tier, alreadyCompleted, savedScore, onComplete, onBa
       setFinalScore(total)
       setDone(true)
       // Submit score and get XP awards back
-      const res = await fetch('/api/code-lab/quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score: total, totalQuestions: questions!.length }),
-      })
-      const data = await res.json()
-      onComplete(total, data.awards, data.levelInfo, data.totalXp)
+      try {
+        const res = await fetch('/api/code-lab/quiz', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ score: total, totalQuestions: questions!.length }),
+        })
+        if (!res.ok) {
+          const body = await res.text().catch(() => '')
+          console.error('submit quiz failed:', res.status, body)
+          setError('Could not submit quiz. Please sign in and try again.')
+          return
+        }
+        const data = await res.json()
+        onComplete(total, data.awards, data.levelInfo, data.totalXp)
+      } catch (err) {
+        console.error('Network error submitting quiz', err)
+        setError('Network error — could not contact server. Try again.')
+        return
+      }
     } else {
       setCurrent(c => c + 1)
       setSelected(null)

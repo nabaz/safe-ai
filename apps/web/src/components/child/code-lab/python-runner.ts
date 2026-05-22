@@ -1,281 +1,117 @@
-// Safe Python-subset runner
-// Transpiles the limited Python used in our lessons into JS and runs it
-// in an isolated scope.
+// Real Python runtime via Pyodide (CPython compiled to WebAssembly).
+// Loaded once from CDN, then reused across runs. Each run gets a fresh
+// global scope so previous lesson code doesn't leak in.
 
 export interface RunResult {
   output: string[]
   error: string | null
 }
 
-export function runPython(code: string): RunResult {
+interface PyodideInstance {
+  runPythonAsync: (code: string) => Promise<unknown>
+  setStdout: (opts: { batched: (msg: string) => void }) => void
+  setStderr: (opts: { batched: (msg: string) => void }) => void
+  globals: {
+    clear: () => void
+    get: (key: string) => unknown
+  }
+}
+
+type PyodideLoader = (opts: { indexURL: string }) => Promise<PyodideInstance>
+
+declare global {
+  interface Window {
+    loadPyodide?: PyodideLoader
+  }
+}
+
+const PYODIDE_VERSION = '0.27.7'
+const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`
+
+let pyodidePromise: Promise<PyodideInstance> | null = null
+
+function loadPyodide(): Promise<PyodideInstance> {
+  if (pyodidePromise) return pyodidePromise
+
+  pyodidePromise = (async () => {
+    if (typeof window === 'undefined') {
+      throw new Error('Pyodide can only run in the browser')
+    }
+
+    if (!window.loadPyodide) {
+      await new Promise<void>((resolve, reject) => {
+        const existing = document.querySelector<HTMLScriptElement>(
+          `script[data-pyodide="${PYODIDE_VERSION}"]`,
+        )
+        if (existing) {
+          existing.addEventListener('load', () => resolve(), { once: true })
+          existing.addEventListener('error', () => reject(new Error('Pyodide script failed to load')), { once: true })
+          return
+        }
+        const script = document.createElement('script')
+        script.src = `${PYODIDE_INDEX}pyodide.js`
+        script.async = true
+        script.dataset.pyodide = PYODIDE_VERSION
+        script.onload = () => resolve()
+        script.onerror = () => reject(new Error('Pyodide script failed to load'))
+        document.head.appendChild(script)
+      })
+    }
+
+    if (!window.loadPyodide) {
+      throw new Error('Pyodide loader missing after script load')
+    }
+    return window.loadPyodide({ indexURL: PYODIDE_INDEX })
+  })().catch((err) => {
+    // Allow retry on transient failures (network blip, CDN hiccup).
+    pyodidePromise = null
+    throw err
+  })
+
+  return pyodidePromise
+}
+
+/** Kick off Pyodide loading without waiting — call on page mount for warm start. */
+export function preloadPyodide(): void {
+  loadPyodide().catch(() => { /* surfaced by next runPython */ })
+}
+
+export async function runPython(code: string): Promise<RunResult> {
   const output: string[] = []
 
   try {
-    const js = transpileToJS(code)
+    const py = await loadPyodide()
 
-    const sandbox = new Function(
-      'print', 'len', 'str', 'int', 'float', 'round', 'range', 'abs', 'max', 'min', 'sum',
-      js
-    )
+    // Fresh scope per run so previous lesson definitions don't leak.
+    py.globals.clear()
 
-    sandbox(
-      (...args: unknown[]) => output.push(args.map(pythonRepr).join(' ')),
-      (x: unknown) => {
-        if (typeof x === 'string') return x.length
-        if (Array.isArray(x)) return x.length
-        if (x && typeof x === 'object') return Object.keys(x).length
-        return 0
-      },
-      (x: unknown) => String(x),
-      (x: unknown) => Math.trunc(Number(x)),
-      (x: unknown) => Number(x),
-      (x: number, digits = 0) => {
-        const factor = Math.pow(10, digits)
-        return Math.round(x * factor) / factor
-      },
-      (startOrStop: number, stop?: number, step = 1) => {
-        const start = stop === undefined ? 0 : startOrStop
-        const end   = stop === undefined ? startOrStop : stop
-        const result: number[] = []
-        if (step > 0) { for (let i = start; i < end; i += step) result.push(i) }
-        else          { for (let i = start; i > end; i += step) result.push(i) }
-        return result
-      },
-      Math.abs,
-      Math.max,
-      Math.min,
-      (arr: number[]) => arr.reduce((a, b) => a + b, 0),
-    )
+    const push = (chunk: string) => {
+      // Pyodide batches multiple lines into one chunk; split so each `print`
+      // line renders on its own row in the output panel.
+      for (const line of chunk.split('\n')) output.push(line)
+      // Drop trailing empty line from the final '\n' of a print statement.
+      if (output.length > 0 && output[output.length - 1] === '') output.pop()
+    }
+    py.setStdout({ batched: push })
+    py.setStderr({ batched: push })
 
+    await py.runPythonAsync(code)
     return { output, error: null }
   } catch (e) {
-    return {
-      output,
-      error: e instanceof Error ? friendlyError(e.message) : 'Something went wrong',
-    }
+    const msg = e instanceof Error ? e.message : String(e)
+    return { output, error: friendlyPythonError(msg) }
   }
 }
 
-// ── Transpiler ────────────────────────────────────────────────────────────────
-
-function transpileToJS(python: string): string {
-  // Normalise line endings, strip trailing whitespace per line
-  const rawLines = python.replace(/\r\n/g, '\n').split('\n').map(l => l.trimEnd())
-
-  // Filter out blank-only content but keep blank lines for structure
-  const lines = rawLines
-
-  const output: string[] = []
-  // Stack of indent levels that opened a block
-  const indentStack: number[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw   = lines[i]
-    const trimmed = raw.trimStart()
-    const indent  = raw.length - trimmed.length
-
-    // Skip blank lines and comments
-    if (trimmed === '') { output.push(''); continue }
-    if (trimmed.startsWith('#')) { output.push(' '.repeat(indent) + '//' + trimmed.slice(1)); continue }
-
-    // Close any open blocks whose indent level is >= current indent
-    while (indentStack.length > 0 && indentStack[indentStack.length - 1]! >= indent) {
-      indentStack.pop()
-      const closeIndent = indentStack.length * 2
-      output.push(' '.repeat(closeIndent) + '}')
-    }
-
-    const jsIndent = ' '.repeat(indentStack.length * 2)
-
-    // ── Block-opening statements ──────────────────────────────────────────
-
-    // for i in range(...): single-line version
-    const forRangeSingleLine = trimmed.match(/^for\s+(\w+)\s+in\s+range\(([^)]+)\)\s*:\s*(.+)$/)
-    if (forRangeSingleLine) {
-      const [, varName, rangeArgs, body] = forRangeSingleLine
-      output.push(jsIndent + `for (const ${varName} of range(${transpileExpr(rangeArgs)})) {`)
-      output.push(' '.repeat(jsIndent.length + 2) + transpileStmt(body) + ';')
-      output.push(jsIndent + '}')
-      continue
-    }
-
-    // for i in range(...): multi-line version
-    const forRange = trimmed.match(/^for\s+(\w+)\s+in\s+range\((.+)\)\s*:$/)
-    if (forRange) {
-      output.push(jsIndent + `for (const ${forRange[1]} of range(${transpileExpr(forRange[2])})) {`)
-      indentStack.push(indent)
-      continue
-    }
-
-    // for x in <iterable>
-    const forIn = trimmed.match(/^for\s+(\w+)\s+in\s+(.+)\s*:$/)
-    if (forIn) {
-      output.push(jsIndent + `for (const ${forIn[1]} of ${transpileExpr(forIn[2])}) {`)
-      indentStack.push(indent)
-      continue
-    }
-
-    // def name(args):
-    const defM = trimmed.match(/^def\s+(\w+)\s*\(([^)]*)\)\s*:$/)
-    if (defM) {
-      output.push(jsIndent + `function ${defM[1]}(${defM[2]}) {`)
-      indentStack.push(indent)
-      continue
-    }
-
-    // if condition:
-    const ifM = trimmed.match(/^if\s+(.+)\s*:$/)
-    if (ifM) {
-      output.push(jsIndent + `if (${transpileCond(ifM[1])}) {`)
-      indentStack.push(indent)
-      continue
-    }
-
-    // elif condition:
-    const elifM = trimmed.match(/^elif\s+(.+)\s*:$/)
-    if (elifM) {
-      output.push(jsIndent + `} else if (${transpileCond(elifM[1])}) {`)
-      // don't push to stack — elif closes + reopens at same level
-      indentStack.push(indent)
-      continue
-    }
-
-    // else:
-    if (trimmed === 'else:') {
-      output.push(jsIndent + '} else {')
-      indentStack.push(indent)
-      continue
-    }
-
-    // ── Regular statements ────────────────────────────────────────────────
-
-    output.push(jsIndent + transpileStmt(trimmed) + ';')
-  }
-
-  // Close any remaining open blocks
-  while (indentStack.length > 0) {
-    indentStack.pop()
-    const closeIndent = indentStack.length * 2
-    output.push(' '.repeat(closeIndent) + '}')
-  }
-
-  return output.join('\n')
-}
-
-// ── Statement transpilation ───────────────────────────────────────────────────
-
-function transpileStmt(line: string): string {
-  // return expr
-  const retM = line.match(/^return\s+(.*)$/)
-  if (retM) return `return ${transpileExpr(retM[1])}`
-
-  // print(...)
-  const printM = line.match(/^print\((.*)?\)$/)
-  if (printM) return `print(${transpileArgs(printM[1] ?? '')})`
-
-  // x.method(args)
-  const methodM = line.match(/^(\w+)\.(append|remove|sort|reverse)\((.*)\)$/)
-  if (methodM) {
-    const [, obj, method, args] = methodM
-    if (method === 'append')  return `${obj}.push(${transpileExpr(args ?? '')})`
-    if (method === 'remove')  return `${obj}.splice(${obj}.indexOf(${transpileExpr(args ?? '')}), 1)`
-    if (method === 'sort')    return `${obj}.sort()`
-    if (method === 'reverse') return `${obj}.reverse()`
-  }
-
-  // variable = expr  (only if looks like an assignment)
-  const assignM = line.match(/^([a-zA-Z_]\w*)\s*=\s*(.+)$/)
-  if (assignM) {
-    return `let ${assignM[1]} = ${transpileExpr(assignM[2])}`
-  }
-
-  // Bare expression (function call etc.)
-  return transpileExpr(line)
-}
-
-// ── Expression transpilation ──────────────────────────────────────────────────
-
-function transpileExpr(expr: string): string {
-  if (!expr) return ''
-  let e = expr.trim()
-
-  // Python keywords -> JS equivalents
-  e = e.replace(/\bNone\b/g,  'null')
-  e = e.replace(/\bTrue\b/g,  'true')
-  e = e.replace(/\bFalse\b/g, 'false')
-  e = e.replace(/\band\b/g,   '&&')
-  e = e.replace(/\bor\b/g,    '||')
-  e = e.replace(/\bnot\b/g,   '!')
-
-  // ** -> Math.pow
-  e = e.replace(/([a-zA-Z_\w.]+|\d+(?:\.\d+)?)\s*\*\*\s*([a-zA-Z_\w.]+|\d+(?:\.\d+)?)/g,
-    'Math.pow($1, $2)')
-
-  // f-strings
-  e = e.replace(/f"([^"]*)"/g, (_, inner) =>
-    '`' + inner.replace(/\{([^}]+)\}/g, '${$1}') + '`')
-  e = e.replace(/f'([^']*)'/g, (_, inner) =>
-    '`' + inner.replace(/\{([^}]+)\}/g, '${$1}') + '`')
-
-  return e
-}
-
-function transpileCond(cond: string): string {
-  let c = transpileExpr(cond)
-  // Python == -> JS === (careful not to touch already-converted === or !=)
-  c = c.replace(/([^!<>=])=(?![=>])/g, '$1===')
-  // Fix any accidental quadruple ====
-  c = c.replace(/====/g, '===')
-  return c
-}
-
-function transpileArgs(args: string): string {
-  return splitTopLevel(args).map(transpileExpr).join(', ')
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Split a comma-separated argument string respecting brackets and strings */
-function splitTopLevel(s: string): string[] {
-  const parts: string[] = []
-  let depth = 0, current = '', inStr = false, strChar = ''
-
-  for (const ch of s) {
-    if (!inStr && (ch === '"' || ch === "'")) { inStr = true; strChar = ch; current += ch; continue }
-    if (inStr && ch === strChar)              { inStr = false; current += ch; continue }
-    if (inStr)                                { current += ch; continue }
-    if ('([{'.includes(ch))  { depth++; current += ch; continue }
-    if (')]}'.includes(ch))  { depth--; current += ch; continue }
-    if (ch === ',' && depth === 0) { parts.push(current.trim()); current = ''; continue }
-    current += ch
-  }
-  if (current.trim()) parts.push(current.trim())
-  return parts
-}
-
-/** Convert JS value to Python-style repr */
-function pythonRepr(val: unknown): string {
-  if (val === null || val === undefined) return 'None'
-  if (val === true)  return 'True'
-  if (val === false) return 'False'
-  if (Array.isArray(val))
-    return '[' + val.map(pythonRepr).join(', ') + ']'
-  if (typeof val === 'object') {
-    const pairs = Object.entries(val as Record<string, unknown>)
-      .map(([k, v]) => `'${k}': ${pythonRepr(v)}`).join(', ')
-    return '{' + pairs + '}'
-  }
-  return String(val)
-}
-
-/** Turn cryptic JS errors into kid-friendly messages */
-function friendlyError(msg: string): string {
-  if (msg.includes('is not defined')) {
-    const name = msg.match(/(\w+) is not defined/)?.[1]
-    return `"${name}" hasn't been created yet — check your spelling!`
-  }
-  if (msg.includes('SyntaxError')) return 'Check your code for typos — something looks off!'
-  if (msg.includes('is not a function')) return 'That doesn\'t look like a valid function call!'
-  if (msg.includes('Cannot read')) return 'Something is missing or empty — check your variables!'
-  return 'Oops! Something went wrong. Check your code and try again.'
+/**
+ * Pyodide surfaces the full Python traceback as the error message. Kids only
+ * care about the last line (the actual error). Strip the rest.
+ */
+function friendlyPythonError(msg: string): string {
+  const lines = msg.split('\n').map(l => l.trimEnd()).filter(Boolean)
+  if (lines.length === 0) return 'Something went wrong'
+  // The last non-empty line is typically `ErrorType: explanation`.
+  const last = lines[lines.length - 1]!
+  // Trim noisy file path prefixes Pyodide injects.
+  return last.replace(/^.*?: /, (match) => match)
 }

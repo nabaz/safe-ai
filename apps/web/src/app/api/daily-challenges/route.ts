@@ -6,36 +6,64 @@ import { getLessonsForTier } from '@/components/child/code-lab/curriculum'
 import { getAiClient } from '@kidai/ai'
 
 const PYTHON_RUNNER_LIMITS = `
-SUPPORTED PYTHON FEATURES:
-- print() with multiple arguments
-- Variables (strings, numbers, booleans)
-- if/elif/else statements
-- for...in loops and for...in range() loops
-- def functions with parameters and return
-- List operations: append, remove, sort, reverse, indexing, slicing
-- Dictionary operations: access, add, update
-- Math operators: +, -, *, /, **, %
-- Comparison: ==, !=, <, >, <=, >=
-- Boolean: True, False, and, or, not
-- Built-in functions: len(), str(), int(), float(), round(), range(), abs(), max(), min(), sum()
-- String concatenation with +
-- f-strings (basic)
+The runtime is full CPython 3.12 (Pyodide / WebAssembly). Every standard Python
+language feature works — lists, dicts, sets, tuples, comprehensions, lambdas,
+classes, exceptions, f-strings, slicing, while loops, all the usual built-ins,
+plus the Python standard library (math, random, statistics, json, re, etc).
 
-NOT SUPPORTED:
-- import statements (except: no imports at all)
-- while loops
-- list comprehensions
-- try/except
-- classes
-- file I/O
-- external libraries
-- input()
-- complex string formatting
+DO NOT USE:
+- input()  — there's no interactive stdin
+- File I/O  — no real filesystem
+- Network calls  — no socket / requests
+- External pip packages outside the stdlib
 `
 
 function generateChallengeId(tier: string, index: number, dateKey: string): string {
   return `ai-${tier}-${dateKey}-${index}`
 }
+
+/**
+ * Validate that solutionCode produces output when run.
+ * Returns true if the code likely produces output, false otherwise.
+ * This is a heuristic check to catch obviously broken solutions.
+ */
+function validateChallengeSolution(solutionCode: string): boolean {
+  const trimmed = solutionCode.trim()
+  
+  // Check 1: Must contain at least one print() call
+  if (!/print\s*\(/i.test(trimmed)) {
+    console.warn('Solution has no print() calls')
+    return false
+  }
+  
+  // Check 2: Should not be ONLY a function definition with no test code after it
+  // (i.e., if it defines a function, it must call that function somewhere)
+  const functionDef = trimmed.match(/^def\s+\w+\s*\([^)]*\)\s*:/m)
+  if (functionDef) {
+    // If there's a function definition, there should be more code after it
+    // (the test call). A simple heuristic: the code should have at least
+    // 3 lines or a function call with the function name.
+    const lines = trimmed.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'))
+    if (lines.length < 2) {
+      console.warn('Solution defines function but has no test code')
+      return false
+    }
+    
+    // Extract function name and check if it's called
+    const nameMatch = functionDef[0].match(/def\s+(\w+)/)
+    if (nameMatch) {
+      const fnName = nameMatch[1]
+      const callPattern = new RegExp(`\\b${fnName}\\s*\\(`, 'i')
+      if (!callPattern.test(trimmed)) {
+        console.warn(`Solution defines ${fnName} but never calls it`)
+        return false
+      }
+    }
+  }
+  
+  return true
+}
+
 
 async function generateDailyChallenges(
   childId: string,
@@ -72,45 +100,82 @@ CHILD PROFILE:
 - Lessons completed: ${completedCount}
 - Units covered: ${coveredUnits.join(', ') || 'none yet'}
 
-DIFFICULTY LEVEL: ${difficulty.toUpperCase()}
-${difficulty === 'easy' ? `
-- Simple, fun puzzles using basic code
-- Real-world scenarios: games, school, home, animals, sports
-- Examples: "count animals", "check if password is long enough", "determine if you won a game"
-` : difficulty === 'medium' ? `
-- Moderate logic puzzles using loops, conditionals, lists
-- Real-world scenarios: managing data, solving puzzles, game mechanics
-- Examples: "find winners in a race", "sort scores", "validate data"
+TIER IS THE PRIMARY CONSTRAINT. The child's age tier sets a HARD CEILING on
+the Python features and conceptual difficulty you may use. XP level only
+varies the *flavor* of challenges within the tier — it never raises the
+ceiling. Do not generate challenges above this tier's level, even if XP is high.
+
+${tier === 'EXPLORER' ? `
+EXPLORER tier (ages 4–7):
+  ONLY these Python features are allowed:
+    - print() with a single string or number
+    - Variables holding a number or string (e.g.  pet = "cat")
+    - if / else with a single comparison (==, <, >)
+    - for i in range(N): with a tiny N (≤ 10)
+    - Basic math: +, -, *
+  DO NOT USE: functions (no def), lists, dictionaries, .count(), in/not in,
+  loops over lists, elif, while, comprehensions, f-strings, imports, len().
+
+  Challenges should be SHORT (3–6 lines) and feel like a puzzle a small child
+  can solve in under a minute. The user fills in ONE blank — a number, a word,
+  or a single operator.
+
+  Good challenge ideas:
+    - "Print hello three times" (fill in the range number)
+    - "Print 'big' if the number is more than 5, else print 'small'"
+    - "Add two prices and print the total"
+    - "Say which animal is bigger" (compare two numbers)
+    - "Count to 5 using a loop"
+
+  Bad challenge ideas (TOO HARD — never generate these for EXPLORER):
+    - find_duplicates, password validator, sort, filter, search, FizzBuzz,
+      anything with a function definition, anything with a list method.
+` : tier === 'BUILDER' ? `
+BUILDER tier (ages 8–11):
+  Allowed Python features:
+    - All of EXPLORER's features, plus:
+    - def functions with 1–2 parameters and return
+    - Lists with append, indexing, simple iteration (for x in items)
+    - if / elif / else
+    - len(), range(start, stop), sum(), max(), min()
+    - f-strings, string concatenation
+  Avoid: dictionaries, classes, list comprehensions, exception handling,
+  recursion, nested data structures.
+
+  Challenges should be 5–12 lines. Define a small function (one job) and call
+  it with a clear example. User fills in 1–3 blanks.
+
+  Good ideas: largest of three numbers, count vowels in a word, sum of a
+  short list, simple password length check, find biggest score, FizzBuzz.
 ` : `
-- Complex problem-solving with functions and algorithms
-- Real-world scenarios: data analysis, optimization, pattern finding
-- Examples: "find duplicates", "optimize strategy", "analyze patterns"
+CREATOR tier (ages 12–15):
+  Full Python is fair game: functions with multiple params, lists, dicts,
+  sets, comprehensions, lambdas, classes (light), exceptions, the stdlib
+  (math, random, json, re, statistics, collections, itertools), recursion,
+  nested logic. Challenges can be 10–25 lines and require multi-step reasoning.
+
+  Good ideas: find_duplicates, binary search, simple sort, anagram detector,
+  word frequency counter, palindrome check, GCD, prime sieve.
 `}
 
-TIER GUIDELINES (for Python simplicity):
-${tier === 'EXPLORER' ? `
-- Ages 4-7. Use print(), if/else, basic loops (for i in range(X))
-- Starter code should have ___ placeholders
-- Concepts explained in 2-3 simple sentences
-` : tier === 'BUILDER' ? `
-- Ages 8-11. Use variables, if/else, loops, functions, lists
-- Starter code can have some blanks and some complete code
-- Concepts in 3-4 sentences with examples
-` : `
-- Ages 12-15. Use functions, lists, dictionaries, nested logic
-- Starter code can be mostly complete with key parts blank
-- Concepts can be detailed
-`}
+WITHIN this tier, vary flavor by XP level (currently ${difficulty.toUpperCase()}):
+  - easy: the most literal/concrete version of a concept, minimal blanks
+  - medium: one or two reasoning steps, more blanks
+  - hard: combines two ideas the child has already seen, more blanks
 
 PYTHON RUNNER LIMITS (MUST FOLLOW):
 ${PYTHON_RUNNER_LIMITS}
 
 REQUIREMENTS:
-- Generate EXACTLY 5 challenges
-- ALL must be "subject": "coding" (NO math challenges)
-- ALL must be real-world brain teasers/logic puzzles
-- Examples: password validator, pizza slicer, race winner finder, duplicate detector, pattern matcher
-- Progressively increase in difficulty from #1 to #5 within the ${difficulty} level
+- Generate EXACTLY 5 challenges.
+- ALL must be "subject": "coding" (NO math challenges).
+- ALL must be real-world, playful scenarios — pets, snacks, games, weather,
+  friends, school, sports — phrased in language the child can read.
+- The 5 challenges form a progression: #1 is the simplest, #5 is the hardest
+  the child can still handle WITHIN this tier's ceiling.
+- Every challenge must respect the tier's allowed-feature list above. If a
+  scenario can only be solved with features outside the tier, pick a
+  different scenario — do not stretch the features.
 
 OUTPUT FORMAT:
 Return ONLY valid JSON — no markdown, no explanation, no code blocks.
@@ -124,22 +189,59 @@ Return ONLY valid JSON — no markdown, no explanation, no code blocks.
   "concept": "Brief explanation (markdown allowed)",
   "example": "Working example code (no ___)",
   "challenge": "What the child must solve (markdown allowed)",
-  "starterCode": "Code with ___ placeholders for blanks",
+  "starterCode": "Complete working starter code",
   "solutionCode": "Complete working solution",
   "expectedOutput": "What the output looks like",
   "hints": ["hint 1", "hint 2", "hint 3"]
 }
 
-IMPORTANT RULES:
-1. starterCode MUST have ___ placeholders
-2. solutionCode MUST be complete with NO ___
-3. solutionCode output MUST match expectedOutput when run
-4. All code MUST work within Python runner limits
-5. NO import statements, NO while loops, NO list comprehensions
-6. Keep titles under 40 characters
-7. Make them FUN and ENGAGING — real-world scenarios only
-8. Each challenge solvable in 2-5 minutes
-9. Difficulty should match the ${difficulty.toUpperCase()} level above
+IMPORTANT RULES — INTERNAL CONSISTENCY IS CRITICAL.
+Before returning, mentally trace each challenge from top to bottom and check
+that example, starter, solution, and expected output all agree.
+
+1. The "example" field must be a SHORT but RUNNABLE program that actually
+   demonstrates the concept the challenge tests. Do NOT make it a single
+   throwaway print() with a literal string — show the real pattern.
+     BAD example for a find-duplicates challenge:
+       print('Found a duplicate')
+     GOOD example:
+       nums = [1, 2, 3, 2, 4, 3]
+       seen = []
+       for n in nums:
+         if n in seen and n not in []:  # demonstrates the technique
+           ...
+       print(seen)
+
+2. starterCode AND solutionCode must both be COMPLETE, RUNNABLE programs that
+   end with a print(...) of the result. The user should NEVER have to add
+   their own test call.
+
+3. solutionCode, when run, MUST produce output EXACTLY equal to expectedOutput
+   (character-for-character after stripping leading/trailing whitespace). This
+   is non-negotiable — if you cannot guarantee the match, redesign the
+   challenge until you can.
+
+4. starterCode is the user's editable starting point. Fill-in-the-blank
+   placeholders (___) are allowed, but every ___ must correspond to a single
+   short answer. After replacing each ___ with the right value, starterCode
+   becomes equivalent to solutionCode and produces the same expectedOutput.
+
+5. expectedOutput must be a SINGLE, SPECIFIC value (e.g., "['apple', 'banana']"
+   or "True" or "42"), not a description. It is compared against the user's
+   stdout via exact-token matching.
+
+6. Imports from the Python stdlib are allowed (math, random, json, re,
+   statistics, collections, itertools). No third-party packages.
+
+7. Keep titles under 40 characters. Make them FUN and engaging — real-world
+   scenarios only. Each challenge solvable in 2-5 minutes. Difficulty matches
+   the ${difficulty.toUpperCase()} level above.
+
+CODE FORMATTING:
+- 2-space indentation, no tabs.
+- No trailing whitespace.
+- One statement per line.
+- If defining a function, include the test call + print at module level.
 `
 
   try {
@@ -164,12 +266,29 @@ IMPORTANT RULES:
       throw new Error(`Expected 5 challenges, got ${challenges.length}`)
     }
 
-    // Assign proper IDs
+    // Validate each challenge's solutionCode
     const dateKey = new Date().toISOString().slice(0, 10)
-    return challenges.map((c: any, i: number) => ({
-      ...c,
-      id: generateChallengeId(tier, i, dateKey),
-    }))
+    const validated = challenges.map((c: any, i: number) => {
+      const isValid = validateChallengeSolution(c.solutionCode)
+      if (!isValid) {
+        console.error(`Challenge ${i} failed validation. SolutionCode: ${c.solutionCode.substring(0, 100)}...`)
+      }
+      return {
+        ...c,
+        id: generateChallengeId(tier, i, dateKey),
+        _validationPassed: isValid,
+      }
+    })
+
+    // If any challenge failed validation, log it but still return (client-side
+    // fallback will help). Alternatively, we could reject the batch and regenerate.
+    const failedCount = validated.filter(c => !c._validationPassed).length
+    if (failedCount > 0) {
+      console.warn(`${failedCount}/${validated.length} challenges failed validation. Using client-side fallback.`)
+    }
+
+    // Strip validation marker before returning (it's only for logging)
+    return validated.map(({ _validationPassed, ...c }: any) => c)
   } catch (error) {
     console.error('Failed to generate daily challenges:', error)
     // Fallback to static curriculum if AI fails
@@ -266,6 +385,31 @@ export async function GET(req: NextRequest) {
     completedIds: [],
     isGenerated: true,
   })
+}
+
+/**
+ * Dev-only: wipe today's cached daily challenges so the next GET regenerates
+ * a fresh batch using the current prompt. Useful after iterating on prompt
+ * wording — blocked in production to avoid accidental loss of progress.
+ */
+export async function DELETE() {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ error: 'Not available in production' }, { status: 403 })
+  }
+
+  const session = await getChildSession()
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const today = new Date()
+  const todayDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()))
+
+  await prisma.dailyChallenge.deleteMany({
+    where: { childId: session.childId, date: todayDate },
+  })
+
+  return NextResponse.json({ ok: true })
 }
 
 export async function POST(req: NextRequest) {

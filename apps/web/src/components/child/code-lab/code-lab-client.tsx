@@ -69,12 +69,17 @@ function challengeToLesson(c: DailyChallenge): Lesson {
     starterCode: c.starterCode,
     solutionCode: c.solutionCode,
     checkOutput: (output: string) => {
-      // For AI challenges, check if expected output keywords are in the output
-      const expected = c.expectedOutput.toLowerCase()
-      const actual = output.toLowerCase()
-      // Extract key numbers/words from expected
-      const tokens = expected.match(/[a-z]+|[0-9.]+/gi) || []
-      return tokens.some(t => actual.includes(t.toLowerCase()))
+      // Tokenize both sides into the "meaningful" pieces (words and numbers) and
+      // require an exact sequence + count match. This catches wrong answers that
+      // happen to mention the right words — e.g. returning ['apple','banana',
+      // 'apple','banana'] when the expected answer is just ['apple','banana'].
+      const tokenize = (s: string) =>
+        (s.toLowerCase().match(/-?\d+\.?\d*|[a-z_]+/g) || [])
+      const expected = tokenize(c.expectedOutput)
+      const actual = tokenize(output)
+      if (expected.length === 0) return output.trim().length > 0
+      if (expected.length !== actual.length) return false
+      return expected.every((t, i) => t === actual[i])
     },
     expectedHint: c.expectedOutput,
     hints: c.hints,
@@ -171,12 +176,29 @@ export function CodeLabClient({
   const handleLessonComplete = useCallback(async (lessonId: string) => {
     if (completedIds.includes(lessonId)) return
 
-    const res = await fetch('/api/code-lab', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lessonId }),
-    })
-    const data = await res.json()
+    let data: any = {}
+    try {
+      const res = await fetch('/api/code-lab', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lessonId }),
+      })
+
+      // If the request was redirected to a sign-in page or returned non-OK,
+      // surface a friendly message instead of throwing an unhandled rejection.
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        toast.error('Could not mark lesson complete. Please sign in and try again.')
+        console.error('handleLessonComplete failed:', res.status, body)
+        return
+      }
+
+      data = await res.json()
+    } catch (err) {
+      console.error('Network error marking lesson complete', err)
+      toast.error('Network error — could not contact server. Try again.')
+      return
+    }
 
     const newCompleted = [...completedIds, lessonId]
     setCompletedIds(newCompleted)
@@ -203,11 +225,21 @@ export function CodeLabClient({
     if (todayCompleted.includes(challengeId)) return
 
     // Mark as completed in DB
-    await fetch('/api/daily-challenges', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challengeId }),
-    })
+    try {
+      const res = await fetch('/api/daily-challenges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId }),
+      })
+      if (!res.ok) {
+        toast.error('Could not mark daily challenge complete. Please sign in and try again.')
+        return
+      }
+    } catch (err) {
+      console.error('Network error marking daily challenge', err)
+      toast.error('Network error — could not contact server. Try again.')
+      return
+    }
 
     // Also mark in static curriculum if it maps to one
     const isStaticLesson = allLessons.some(l => l.id === challengeId)
@@ -219,21 +251,31 @@ export function CodeLabClient({
     setTodayCompleted(newTodayCompleted)
 
     // Award XP for daily challenge
-    const res = await fetch('/api/code-lab', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lessonId: challengeId }),
-    })
-    const data = await res.json()
-
-    if (data.totalXp !== undefined) {
-      setTotalXp(data.totalXp)
-      setLevelInfo(data.levelInfo)
-      if (data.awards?.length) {
-        data.awards.forEach((a: { points: number; reason: string }) => {
-          toast.success(`+${a.points} XP — ${a.reason}`, { icon: '⚡', duration: 3000 })
-        })
+    try {
+      const res2 = await fetch('/api/code-lab', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lessonId: challengeId }),
+      })
+      if (!res2.ok) {
+        toast.error('Could not award XP. Please sign in and try again.')
+        return
       }
+      const data = await res2.json()
+
+      if (data.totalXp !== undefined) {
+        setTotalXp(data.totalXp)
+        setLevelInfo(data.levelInfo)
+        if (data.awards?.length) {
+          data.awards.forEach((a: { points: number; reason: string }) => {
+            toast.success(`+${a.points} XP — ${a.reason}`, { icon: '⚡', duration: 3000 })
+          })
+        }
+      }
+    } catch (err) {
+      console.error('Network error awarding XP', err)
+      toast.error('Network error — could not contact server. Try again.')
+      return
     }
 
     if (newTodayCompleted.length === 5) {
@@ -352,6 +394,25 @@ export function CodeLabClient({
           <div className="hidden sm:block">
             <XpBar levelInfo={levelInfo} totalXp={totalXp} theme={theme} compact />
           </div>
+
+          {/* Dev-only: nuke today's cached challenges and force regeneration */}
+          {process.env.NODE_ENV !== 'production' && (
+            <button
+              onClick={async () => {
+                if (!confirm("Regenerate today's challenges with the current prompt? This wipes today's progress on them.")) return
+                const res = await fetch('/api/daily-challenges', { method: 'DELETE' })
+                if (!res.ok) {
+                  alert('Failed to regenerate: ' + res.status)
+                  return
+                }
+                window.location.reload()
+              }}
+              title="Dev: regenerate today's daily challenges"
+              className="text-[10px] font-mono px-2 py-1 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+            >
+              regen
+            </button>
+          )}
 
           {/* Daily dots */}
           <div className="flex items-center gap-1">
